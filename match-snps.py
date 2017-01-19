@@ -5,11 +5,12 @@ Utility to match lists of SNPs and to find tags if needed.
 """
 
 
-import os
+import sqlite3
+import logging
 import argparse
 import collections
 
-import pandas as pd
+import numpy as np
 from gepyto.structures.region import Region
 from genetest.genotypes import format_map
 from genetest.genotypes.core import Representation
@@ -17,19 +18,20 @@ from genetest.genotypes.core import Representation
 
 Locus = collections.namedtuple("Locus", ("chrom", "pos"))
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 class Results(object):
     def __init__(self, filename, header):
         # Open the output file.
-        self.f = open(
-            os.path.join(os.path.dirname(__file__), filename),
-            "w"
-        )
-        self.f.write("\t".join(header) + "\n")
+        self.f = open(filename, "w")
+        self.sep = ","
+        self.f.write(self.sep.join(header) + "\n")
 
     def write(self, *args):
         self.f.write(
-            "\t".join([str(i) for i in args]) + "\n"
+            self.sep.join([str(i) for i in args]) + "\n"
         )
 
     def close(self):
@@ -64,64 +66,93 @@ def _extend_with_complement(alleles):
     return alleles | complement
 
 
-def match_name(results, warn, row, target):
+def match_name(results, warn, cur):
     """Match variant by name in the source and target lists."""
-    hit = target.loc[target["name"] == row["name"], :]
+    cur.execute(
+        "SELECT s.name, t.name, COUNT(s.name) "
+        "FROM source s, target t "
+        "WHERE"
+        "  s.name=t.name AND"
+        "  s.name NOT IN (SELECT source FROM matches) "
+        "GROUP BY s.name"
+    )
 
-    if hit.shape[0] == 1:
-        results.write(row["name"], row["name"], "NAME_MATCH")
-        return True
-    elif hit.shape[0] > 0:
-        warn.write(
-            row["name"],
-            "NAME_MATCH",
-            "{} matches by name (ambiguous)".format(hit.shape[0])
-        )
-    return False
+    inserts = []
+    for src, tar, n in cur:
+        if n > 1:
+            warn.write(
+                src,
+                "NAME_MATCH",
+                "{} matches by name (ambiguous)".format(n)
+            )
+        else:
+            inserts.append((src, tar, "NAME_MATCH"))
 
-
-def match_variant(results, warn, row, target):
-    """Match variant by chromosome position and alleles."""
-    alleles = {i.lower() for i in (row.a1, row.a2)}
-    alleles = _extend_with_complement(alleles)
-
-    hit = target.loc[
-        (target["chrom"] == row.chrom) &
-        (target["pos"] == row.pos) &
-        (target["a1"].str.lower().isin(alleles)) &
-        (target["a2"].str.lower().isin(alleles))
-    ]
-
-    if hit.shape[0] == 1:
-        results.write(row.name, hit.iloc[0, :]["name"], "VARIANT_MATCH")
-        return True
-    elif hit.shape[0] > 0:
-        warn.write(
-            row["name"],
-            "VARIANT_MATCH",
-            "{} matches by variant (ambiguous)".format(hit.shape[0])
-        )
-    return False
+    cur.executemany("INSERT INTO matches VALUES (?, ?, ?)", inserts)
 
 
-def find_tags(missing_idx, source, target, reference, reference_format):
+def match_variant(results, warn, cur):
+    """Match variant by chromosome position and alleles.
+
+    Dots can be used to match any allele.
+
+    FIXME this can be pretty slow.
+
+    """
+    # First, match by locus without looking at the alleles.
+    cur.execute(
+        "SELECT s.name, t.name, s.chrom, s.pos, "
+        "  lower(s.a1), lower(s.a2), lower(t.a1), lower(t.a2) "
+        "FROM source s, target t "
+        "WHERE "
+        "  s.chrom=t.chrom AND s.pos=t.pos AND"
+        "  s.name NOT IN (SELECT source FROM matches)"
+    )
+
+    inserts = []
+    for src, tar, chrom, pos, s_a1, s_a2, t_a1, t_a2 in cur:
+        # Check that alleles match and insert the match.
+        insert = False
+        alleles = _extend_with_complement({s_a1, s_a2})
+        if {t_a1, t_a2} <= alleles:
+            insert = True
+        elif "." in {s_a1, s_a2} or "." in {t_a1, t_a2}:
+            insert = True
+
+        if insert:
+            inserts.append([src, tar, "VARIANT_MATCH"])
+
+    cur.executemany("INSERT INTO matches VALUES (?, ?, ?)", inserts)
+
+
+def find_tags(cur, reference, reference_format, prefix=""):
     """Find tags in the reference dataset."""
     LD_WINDOW = 100e3  # 100kb
 
     regions = {}
 
-    # Build one region per chromosome.
-    for idx, row in source.loc[missing_idx, :].iterrows():
+    # Create a genomic range that covers all the SNPs that are missing from
+    # the dataset.
+    # This is done by padding every SNP position with LD_WINDOW and
+    # concatenating the individual loci.
+    logger.info("Building genomic regions for reference SNP extraction...")
+    cur.execute(
+        "SELECT chrom, pos "
+        "FROM source "
+        "WHERE source.name NOT IN (SELECT source FROM matches)"
+    )
+
+    for chrom, pos in cur:
         region = Region(
-            row["chrom"],
-            min(0, row["pos"] - LD_WINDOW // 2),
-            row["pos"] + LD_WINDOW // 2,
+            chrom,
+            max(0, pos - LD_WINDOW // 2),
+            pos + LD_WINDOW // 2,
         )
 
-        if regions.get(row["chrom"]) is None:
-            regions[row["chrom"]] = region
+        if regions.get(chrom) is None:
+            regions[chrom] = region
         else:
-            regions[row["chrom"]] = regions[row["chrom"]].union(region)
+            regions[chrom] = regions[chrom].union(region)
 
     # Extract genotypes in every region.
     if reference_format not in format_map.keys():
@@ -133,64 +164,125 @@ def find_tags(missing_idx, source, target, reference, reference_format):
     container = format_map[reference_format](reference,
                                              Representation.ADDITIVE)
 
+    logger.info("Reading genotypes from the reference...")
     genotypes = {}
     for snp in container.iter_marker_genotypes():
-        chrom = snp["chrom"]
-        if Locus(chrom, snp["pos"]) in regions[chrom]:
+        chrom = str(snp.chrom)
+        region = regions.get(chrom)
+        if region and Locus(chrom, snp.pos) in region:
             # Add the genotypes.
             if genotypes.get(chrom) is None:
                 genotypes[chrom] = snp.genotypes
-                genotypes[chrom].columns = [snp.name]
+                genotypes[chrom].columns = [snp.marker]
 
             else:
-                genotypes[chrom].loc[
-                    snp.genotypes.index,
-                    snp.name
-                ] = snp.genotypes
+                genotypes[chrom][snp.marker] = snp.genotypes.values[:, 0]
 
-    # Save all the genotypes to disk.
-    for chrom, genotypes in genotypes.items():
-        genotypes.to_csv(
-            os.path.join("genotypes", "chrom{}.genotypes.csv")
-        )
+    logger.info("Computing LD...")
+    # Compute the pairwise LD matrices for every chromosome.
+    for chrom, g in genotypes.items():
+        mat = g.values
+        mat = (mat - np.mean(mat, axis=0)) / np.std(mat, axis=0)
+        r = np.dot(mat.T, mat) / mat.shape[0]
+        np.save("{}ld.chr{}.npy".format(prefix, chrom), r)
+
+    # Find the available variant in highest LD with the missing variants in
+    # the source file.
+    # TODO
 
 
 def main(args):
-    # Read the source file.
-    cols = ["name", "chrom", "pos", "a1", "a2"]
+    prefix = "{}.".format(args.out) if args.out else ""
 
-    source = pd.read_csv(args.source, names=cols, header=0)
-    target = pd.read_csv(args.target, names=cols, header=0)
+    if args.memory:
+        db_filename = ":memory:"
+    else:
+        db_filename = "{}matcher.db".format(prefix)
 
-    source, target = _cast_cols(source, target)
+    con = sqlite3.connect(db_filename)
+    cur = con.cursor()
+
+    def do_inserts(rows, table, cur):
+        cur.executemany(
+            "INSERT INTO {} VALUES (?, ?, ?, ?, ?)".format(table), rows
+        )
+
+    for table in ("source", "target"):
+        cur.execute(
+            "CREATE TABLE {} ("
+            "  name TEXT,"
+            "  chrom TEXT,"
+            "  pos INTEGER,"
+            "  a1 TEXT,"
+            "  a2 TEXT"
+            ")".format(table)
+        )
+
+        with open(getattr(args, table), "r") as f:
+            header = f.readline()
+            assert (
+                header.strip().split(",") == ["name", "chrom", "pos", "a1", "a2"]
+            )
+            buf = []
+            for line in f:
+                line = line.strip().split(",")
+                assert len(line) == 5
+
+                buf.append(line)
+                if len(buf) > 5000:
+                    do_inserts(buf, table, cur)
+                    buf = []
+
+            if buf:
+                do_inserts(buf, table, cur)
+
+    cur.execute(
+        "CREATE TABLE matches ("
+        "  source TEXT,"
+        "  target TEXT,"
+        "  how TEXT,"
+        "  FOREIGN KEY(source) REFERENCES source(name),"
+        "  FOREIGN KEY(target) REFERENCES target(name)"
+        ")"
+    )
+
+    con.commit()
 
     # n the number of variants in the source.
-    n = source.shape[0]
+    cur.execute("SELECT COUNT(*) FROM source")
+    n = cur.fetchone()[0]
 
     results_cols = ["source_name", "target_name", "method"]
     warn_cols = ["source_name", "method", "message"]
 
-    matches = 0
-    missing = []
-    with Results("matcher.output.txt", results_cols) as out, \
-         Results("matcher.warnings.txt", warn_cols) as warn:
-        for idx, row in source.iterrows():
-            matched = False
-            for matcher in MATCHERS:
-                if matcher(out, warn, row, target):
-                    matches += 1
-                    matched = True
-                    break
+    logger.info("Matching variants...")
 
-            if not matched:
-                # We need to try to match in the reference dataset.
-                missing.append(idx)
+    out_filename = "{}matcher.output.txt".format(prefix)
+    warn_filename = "{}matcher.warning.txt".format(prefix)
 
-    if args.reference:
-        find_tags(missing, source, target, args.reference,
-                  args.reference_format)
+    with Results(out_filename, results_cols) as out, \
+         Results(warn_filename, warn_cols) as warn:
+        for matcher in MATCHERS:
+            matcher(out, warn, cur)
 
-    print("Done matching variants. Found hits for {} / {}.".format(matches, n))
+        cur.execute("SELECT * FROM matches")
+        for src, tar, method in cur:
+            out.write(src, tar, method)
+
+    # Check number of matches.
+    cur.execute("SELECT COUNT(*) FROM matches")
+    n_matches = cur.fetchone()[0]
+
+    logger.info(
+        "Done matching variants. Found hits for {} / {}.".format(n_matches, n)
+    )
+
+    if args.reference and n_matches < n:
+        logger.info("Finding tags in the reference for missing variants...")
+        find_tags(cur, args.reference, args.reference_format, prefix)
+
+    con.commit()
+    con.close()
 
 
 def parse_args():
@@ -236,6 +328,19 @@ def parse_args():
         help=("File format of the genotypes in the reference (default: "
               "%(default)s)."),
         default="plink"
+    )
+
+    parser.add_argument(
+        "--memory",
+        help="Load the matching database in memory instead of writing it.",
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--out",
+        type=str,
+        default="",
+        help="Output prefix."
     )
 
     return parser.parse_args()
