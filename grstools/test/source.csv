@@ -1,0 +1,11 @@
+name,chrom,pos,a1,a2
+name_match,1,123,A,G
+pos_match,2,123,T,G
+flip_alleles_match,3,123,T,G
+no_match,16,46289492,A,G
+no_match2,1,55505149,A,G
+no_match3,1,182117323,.,.
+ambiguous,1,123,A,G
+indel,1,231235249,AGGTCT,A
+dot_notation_source,2,101469027,.,.
+dot_notation_target,3,101469027,a,t
