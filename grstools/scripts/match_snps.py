@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """
 Utility to match lists of SNPs and to find tags if needed.
 """
@@ -18,7 +16,6 @@ from genetest.genotypes.core import Representation
 
 Locus = collections.namedtuple("Locus", ("chrom", "pos"))
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -191,7 +188,9 @@ def find_tags(cur, reference, reference_format, prefix=""):
     # TODO
 
 
-def main(args):
+def main():
+    args = parse_args()
+
     prefix = "{}.".format(args.out) if args.out else ""
 
     if args.memory:
@@ -210,9 +209,9 @@ def main(args):
     for table in ("source", "target"):
         cur.execute(
             "CREATE TABLE {} ("
-            "  name TEXT,"
-            "  chrom TEXT,"
-            "  pos INTEGER,"
+            "  name TEXT NOT NULL,"
+            "  chrom TEXT NOT NULL,"
+            "  pos INTEGER NOT NULL,"
             "  a1 TEXT,"
             "  a2 TEXT"
             ")".format(table)
@@ -225,7 +224,9 @@ def main(args):
             )
             buf = []
             for line in f:
-                line = line.strip().split(",")
+                line = [
+                    i if i != "" else None for i in line.strip().split(",")
+                ]
                 assert len(line) == 5
 
                 buf.append(line)
@@ -347,7 +348,3 @@ def parse_args():
 
 
 MATCHERS = [match_name, match_variant]
-
-
-if __name__ == "__main__":
-    main(parse_args())
