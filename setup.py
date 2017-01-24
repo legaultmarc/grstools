@@ -24,6 +24,7 @@ def setup_package():
             "console_scripts": [
                 "grs-match-snps=grstools.scripts.match_snps:main",
                 "grs-build=grstools.scripts.build_grs:main",
+                "grs-utils=grstools.scripts.utils:main",
             ],
         },
         classifiers=["Development Status :: 4 - Beta",
