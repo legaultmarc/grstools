@@ -4,6 +4,7 @@ Utility to match lists of SNPs and to find tags if needed.
 
 
 import sqlite3
+import multiprocessing
 import logging
 import argparse
 import collections
@@ -122,35 +123,50 @@ def match_variant(results, warn, cur):
     cur.executemany("INSERT INTO matches VALUES (?, ?, ?)", inserts)
 
 
-def find_tags(cur, reference, reference_format, prefix=""):
+def find_tags_for_target(cur, reference, reference_format, prefix="",
+                         tag_all=False):
     """Find tags in the reference dataset."""
-    LD_WINDOW = 100e3  # 100kb
-
-    regions = {}
-
-    # Create a genomic range that covers all the SNPs that are missing from
-    # the dataset.
-    # This is done by padding every SNP position with LD_WINDOW and
-    # concatenating the individual loci.
     logger.info("Building genomic regions for reference SNP extraction...")
-    cur.execute(
-        "SELECT chrom, pos "
-        "FROM source "
-        "WHERE source.name NOT IN (SELECT source FROM matches)"
-    )
-
-    for chrom, pos in cur:
-        region = Region(
-            chrom,
-            max(0, pos - LD_WINDOW // 2),
-            pos + LD_WINDOW // 2,
+    if tag_all:
+        cur.execute(
+            "SELECT chrom, pos FROM target"
+        )
+    else:
+        cur.execute(
+            "SELECT chrom, pos "
+            "FROM target "
+            "WHERE target.name NOT IN (SELECT target FROM matches)"
         )
 
-        if regions.get(chrom) is None:
-            regions[chrom] = region
-        else:
-            regions[chrom] = regions[chrom].union(region)
+    tag_snps(cur, reference, reference_format, prefix)
 
+    # Find the available variant in highest LD with the missing variants in
+    # the source file.
+    # TODO
+
+
+def tag_snps(snps, reference, reference_format, ld_window=int(100e3),
+             maf_threshold=0.001, prefix=""):
+    """Tag the provided snps in the reference.
+
+    Args:
+        snps (iterable): An iterable of pairs of chromosome, position.
+        reference (str): The path to the reference.
+        reference_format (str): The data type of the reference as understood
+                                by genetest genotypes containers.
+        ld_window (int): Size of the region around each SNP to consider for the
+                         ld computation.
+        maf_threshold (float): The minimum MAF for variants to be included in
+                               the LD calculation.
+        prefix (str): A prefix for output files.
+
+    """
+    # Create a genomic range that covers all the SNPs that are missing from
+    # the dataset.
+    # This is done by padding every SNP position with ld_window and
+    # concatenating the individual loci.
+
+    # Check early that we will be able to read the reference.
     # Extract genotypes in every region.
     if reference_format not in format_map.keys():
         raise ValueError(
@@ -161,31 +177,91 @@ def find_tags(cur, reference, reference_format, prefix=""):
     container = format_map[reference_format](reference,
                                              Representation.ADDITIVE)
 
-    logger.info("Reading genotypes from the reference...")
-    genotypes = {}
-    for snp in container.iter_marker_genotypes():
-        chrom = str(snp.chrom)
-        region = regions.get(chrom)
-        if region and Locus(chrom, snp.pos) in region:
-            # Add the genotypes.
-            if genotypes.get(chrom) is None:
-                genotypes[chrom] = snp.genotypes
-                genotypes[chrom].columns = [snp.marker]
+    regions = {}
 
-            else:
-                genotypes[chrom][snp.marker] = snp.genotypes.values[:, 0]
+    ld_window = int(ld_window)
+    logger.info("Building the LD region (LD_WINDOW={})...".format(ld_window))
+    for chrom, pos in snps:
+        region = Region(
+            chrom,
+            max(0, pos - ld_window // 2),
+            pos + ld_window // 2,
+        )
+
+        if regions.get(chrom) is None:
+            regions[chrom] = region
+        else:
+            regions[chrom] = regions[chrom].union(region)
+
+    logger.info("Finding SNPs in the LD region...")
+
+    region_snps = []
+    for snp_info in container.iter_marker_info():
+        _check_snp_in_region(snp_info, regions, region_snps)
+
+    del regions
+    logger.info("Found {} SNPs in the LD region.".format(len(region_snps)))
+
+    logger.info("Extracting genotypes...")
+    minimum_sum = 2 * maf_threshold * container.get_nb_samples()
+    genotypes = {}
+    for snp in region_snps:
+        g = container.get_genotypes(snp)
+
+        # Apply the MAF threshold (we also check that there are at least two
+        # mutant alleles in the population).
+        cur_sum = np.nansum(g.genotypes.values)
+        if cur_sum == 2 or cur_sum < minimum_sum:
+            continue
+
+        if genotypes.get(g.info.chrom) is None:
+            genotypes[g.info.chrom] = g.genotypes
+            genotypes[g.info.chrom].columns = [snp]
+
+        else:
+            genotypes[g.info.chrom][snp] = g.genotypes.values[:, 0]
+
+    del region_snps
 
     logger.info("Computing LD...")
     # Compute the pairwise LD matrices for every chromosome.
-    for chrom, g in genotypes.items():
-        mat = g.values
-        mat = (mat - np.mean(mat, axis=0)) / np.std(mat, axis=0)
-        r = np.dot(mat.T, mat) / mat.shape[0]
-        np.save("{}ld.chr{}.npy".format(prefix, chrom), r)
+    p = multiprocessing.Pool(multiprocessing.cpu_count() - 1)
+    ld_matrices = p.map(_compute_ld, genotypes.items())
+    p.close()
 
-    # Find the available variant in highest LD with the missing variants in
-    # the source file.
-    # TODO
+    for chrom, names, ld in ld_matrices:
+        with open("{}ld.chr{}.names".format(prefix, chrom), "w") as f:
+            for name in names:
+                f.write(name + "\n")
+
+        np.save("{}ld.chr{}.npy".format(prefix, chrom), ld)
+
+    # for chrom, g in genotypes.items():
+    #     mat = g.values
+    #     mat = (mat - np.mean(mat, axis=0)) / np.std(mat, axis=0)
+    #     r = np.dot(mat.T, mat) / mat.shape[0]
+    #     np.save("{}ld.chr{}.npy".format(prefix, chrom), r)
+
+    # TODO either save or return the matrices.
+
+
+def _check_snp_in_region(snp_info, regions, out):
+    chrom = str(snp_info.chrom)
+    region = regions.get(chrom)
+    if region and Locus(chrom, snp_info.pos) in region:
+        # Add the marker.
+        out.append(snp_info.marker)
+
+
+def _compute_ld(tu):
+    chrom, g = tu
+    mat = g.values
+    mat = (mat - np.nanmean(mat, axis=0)) / np.nanstd(mat, axis=0)
+
+    nans = np.isnan(mat)
+    n = mat.shape[0] - nans.sum(axis=0)
+    mat[nans] = 0
+    return chrom, g.columns, np.dot(mat.T, mat) / n
 
 
 def main():
@@ -278,9 +354,16 @@ def main():
         "Done matching variants. Found hits for {} / {}.".format(n_matches, n)
     )
 
-    if args.reference and n_matches < n:
-        logger.info("Finding tags in the reference for missing variants...")
-        find_tags(cur, args.reference, args.reference_format, prefix)
+    if (args.reference and n_matches < n) or (args.reference and args.tag_all):
+        if args.tag_all:
+            logger.info("Finding tags in the reference for all target "
+                        "variants...")
+        else:
+            logger.info("Finding tags in the reference for missing "
+                        "variants...")
+
+        find_tags_for_target(cur, args.reference, args.reference_format, prefix,
+                             args.tag_all)
 
     con.commit()
     con.close()
@@ -334,6 +417,12 @@ def parse_args():
     parser.add_argument(
         "--memory",
         help="Load the matching database in memory instead of writing it.",
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--tag-all",
+        help="Tag all the variants in the target file.",
         action="store_true"
     )
 

@@ -26,6 +26,7 @@ def histogram(args):
     data = _read_grs(args.grs_filename)
 
     plt.hist(data["grs"], bins=args.bins)
+    plt.xlabel("GRS")
     logger.info("WRITING histogram to file '{}'.".format(out))
     if args.out.endswith(".png"):
         plt.savefig(out, dpi=300)
@@ -71,21 +72,22 @@ def parse_args():
 
     parent = argparse.ArgumentParser(add_help=False)
 
+    # General arguments.
+    parent.add_argument(
+        "grs_filename",
+        help="Path to the file containing the computed GRS."
+    )
+
+    parent.add_argument(
+        "--out", "-o",
+        default=None
+    )
+
     subparser = parser.add_subparsers(
         dest="command",
     )
 
     subparser.required = True
-
-    parser.add_argument(
-        "grs_filename",
-        help="Path to the file containing the computed GRS."
-    )
-
-    parser.add_argument(
-        "--out", "-o",
-        default=None
-    )
 
     # Histogram
     histogram_parse = subparser.add_parser(
@@ -94,11 +96,7 @@ def parse_args():
         parents=[parent]
     )
 
-    histogram_parse.add_argument(
-        "--bins",
-        type=int,
-        default=60
-    )
+    histogram_parse.add_argument("--bins", type=int, default=60)
 
     # Quantiles
     quantiles = subparser.add_parser(
