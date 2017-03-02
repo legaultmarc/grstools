@@ -89,6 +89,7 @@ def main():
     grs["risk"] = grs["risk"].str.lower()
 
     # Read mapper into a dict.
+    # The resulting dict is from source -> target.
     mappings = {}
     with open(args.mapper, "r") as f:
         header = f.readline().strip().split(args.delimiter)
@@ -101,6 +102,7 @@ def main():
     variants = list(mappings.keys())
 
     # Make sure the mapping has all the variants from the GRS.
+    # The variants from the GRS are expected to be in the SOURCE.
     missing = set(grs.index) - set(mappings.keys())
     if missing:
         raise IncompleteMapping(
@@ -148,8 +150,8 @@ def main():
         else:
             geno[variant] = g.genotypes
 
-        alleles[variant] = Alleles(minor=g.minor.lower(),
-                                   major=g.major.lower())
+        alleles[variant] = Alleles(minor=g.info.get_minor().lower(),
+                                   major=g.info.get_major().lower())
 
     # Create the genotype_confidence_weight column.
     if args.genotypes_format == "impute2":

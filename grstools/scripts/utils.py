@@ -43,7 +43,7 @@ def quantiles(args):
 
     data["group"] = np.nan
     data.loc[data["grs"] <= low, "group"] = 0
-    data.loc[data["grs"] > high, "group"] = 1
+    data.loc[data["grs"] >= high, "group"] = 1
 
     if not args.keep_unclassified:
         data = data.dropna(axis=0, subset=["group"])
@@ -54,12 +54,21 @@ def quantiles(args):
     data[["group"]].to_csv(out)
 
 
+def standardize(args):
+    out = args.out if args.out else "grs_standardized.csv"
+    data = _read_grs(args.grs_filename)
+
+    data["grs"] = (data["grs"] - data["grs"].mean()) / data["grs"].std()
+    data.to_csv(out)
+
+
 def main():
     args = parse_args()
 
     command_handlers = {
         "histogram": histogram,
         "quantiles": quantiles,
+        "standardize": standardize,
     }
 
     command_handlers[args.command](args)
@@ -114,5 +123,12 @@ def parse_args():
     quantiles.add_argument("-k", default=1, type=int)
     quantiles.add_argument("-q", default=2, type=int)
     quantiles.add_argument("--keep-unclassified", action="store_true")
+
+    # Standardize
+    subparser.add_parser(
+        "standardize",
+        help="Standardize the GRS (grs <- (grs - mean) / std).",
+        parents=[parent]
+    )
 
     return parser.parse_args()

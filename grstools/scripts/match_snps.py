@@ -347,7 +347,9 @@ def main():
             out.write(src, tar, method)
 
     # Check number of matches.
-    cur.execute("SELECT COUNT(*) FROM matches")
+    cur.execute(
+        "SELECT COUNT(DISTINCT source) FROM matches"
+    )
     n_matches = cur.fetchone()[0]
 
     logger.info(
