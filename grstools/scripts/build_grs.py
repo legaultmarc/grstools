@@ -6,10 +6,14 @@ import os
 import collections
 import logging
 import argparse
+import numpy as np
 import pandas as pd
 
+import matplotlib.pyplot as plt
 from genetest.genotypes import format_map
 from genetest.genotypes.core import Representation
+
+from .match_snps import ld
 
 
 logger = logging.getLogger(__name__)
@@ -192,6 +196,19 @@ def main():
                 "'{}')".format(info_filename)
             )
 
+    if args.ld_plot:
+        _ld = ld(geno.values)
+        plt.imshow(_ld)
+        plt.colorbar()
+        np.fill_diagonal(_ld, -np.inf)
+
+        logger.info(
+            "WRITING LD plot for the GRS (max off-diagnoal LD={:.2f})."
+            "".format(np.max(_ld[~np.isnan(_ld)]))
+        )
+
+        plt.savefig("{}_ld.png".format(args.out), dpi=300)
+
     computed_grs = compute_grs(grs, geno, alleles, args.skip_bad_alleles)
     logger.info("WRITING file containing the GRS: '{}'".format(args.out))
     computed_grs.to_csv(args.out, header=True, index_label="sample")
@@ -249,6 +266,13 @@ def parse_args():
         "--skip-bad-alleles",
         help=("Skip variants whose alleles are inconsistent between the GRS "
               "and the genotypes files."),
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--ld-plot",
+        help=("Add an LD plot to see how correlated the variants in the GRS "
+              "are."),
         action="store_true"
     )
 

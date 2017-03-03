@@ -23,8 +23,9 @@ def setup_package():
         entry_points={
             "console_scripts": [
                 "grs-match-snps=grstools.scripts.match_snps:main",
-                "grs-build=grstools.scripts.build_grs:main",
+                "grs-compute=grstools.scripts.build_grs:main",
                 "grs-utils=grstools.scripts.utils:main",
+                "grs-create=grstools.scripts.choose_snps:main",
             ],
         },
         classifiers=["Development Status :: 4 - Beta",

@@ -253,15 +253,24 @@ def _check_snp_in_region(snp_info, regions, out):
         out.append(snp_info.marker)
 
 
-def _compute_ld(tu):
-    chrom, g = tu
-    mat = g.values
+def ld(mat):
+    """Compute the LD matrix from a sample x snp matrix.
+
+    Returns a dense numpy matrix.
+
+    """
     mat = (mat - np.nanmean(mat, axis=0)) / np.nanstd(mat, axis=0)
 
     nans = np.isnan(mat)
     n = mat.shape[0] - nans.sum(axis=0)
     mat[nans] = 0
-    return chrom, g.columns, np.dot(mat.T, mat) / n
+    return np.dot(mat.T, mat) / n
+
+
+def _compute_ld(tu):
+    chrom, g = tu
+    _ld = ld(g.values)
+    return chrom, g.columns, _ld
 
 
 def main():
