@@ -81,7 +81,6 @@ def main():
     maf_threshold = 0.05
     ld_threshold = 0.05
 
-    # Selected variants.
     out = []
 
     # Variant to significance (initialized as a list but will be an
@@ -146,8 +145,10 @@ def main():
 
     while len(summary) > 0:
         cur, p = summary.popitem(last=False)
-        while cur not in genotypes:
-            cur, p = summary.popitem(last=False)
+        if cur not in genotypes:
+            continue
+
+        out.append(cur)
 
         cur_geno = genotypes[cur]
 
@@ -158,6 +159,8 @@ def main():
         other_genotypes = []
         retained_loci = []
 
+        # For all the loci in this region we match with the reference to
+        # build a genotype matrix.
         for locus in loci:
             geno = genotypes.get(locus)
 
@@ -167,13 +170,22 @@ def main():
             if geno is None:
                 # Remove variants that have no genotype data in the reference
                 # or that failed because of MAF thresholds.
-                del summary[locus]
+                try:
+                    del summary[locus]
+                except KeyError:
+                    pass
 
-            else:
+            # We only keep loci that have not been excluded yet.
+            elif locus in summary:
                 other_genotypes.append(geno)
                 retained_loci.append(locus)
 
         other_genotypes = np.array(other_genotypes).T
+
+        # Only variant in locus.
+        if other_genotypes.shape[0] == 0:
+            print("Singleton: {}".format(cur))
+            continue
 
         # Compute the LD in block.
         cur_nan = np.isnan(cur_geno)
@@ -194,4 +206,4 @@ def main():
         print("Remaining {} variants.".format(len(summary)))
 
     with open("dump.pkl", "wb") as f:
-        pickle.dump(summary, f)
+        pickle.dump(out, f)
