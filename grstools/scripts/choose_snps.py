@@ -1,4 +1,5 @@
 """
+ 
 Choose SNPs from GWAS summary statistics.
 
 Method 1:
@@ -12,8 +13,13 @@ Ideas:
 
 """
 
+import pickle
+import bisect
+import collections
+
 from genetest.genotypes import format_map
-from genetest.genotypes.core import Representation
+from genetest.genotypes.core import Representation, MarkerInfo
+from genetest.statistics.descriptive import get_maf
 
 import pandas as pd
 import numpy as np
@@ -21,116 +27,171 @@ import numpy as np
 from .match_snps import ld
 
 
-def parse_summary_statistics(filename, columns, sep=","):
-    columns = columns.items()
-    df = pd.read_csv(filename, sep=sep)
+class Variant(object):
+    __slots__ = ("chrom", "pos", "alleles")
 
-    df = df[[i[1] for i in columns]]
-    df.columns = [i[0] for i in columns]
+    def __init__(self, chrom, pos, alleles=None):
+        self.chrom = str(chrom)
+        self.pos = int(pos)
 
-    return df.sort_values("significance")
+        if alleles is None or "." in alleles:
+            self.alleles = "ANY"
+        else:
+            self.alleles = frozenset([i.lower() for i in alleles])
+
+    def locus_eq(self, other):
+        """Chromosome and position match."""
+        return (
+            self.chrom == other.chrom and
+            self.pos == other.pos
+        )
+
+    def __eq__(self, other):
+        """Equality is defined as being the same locus and matching alleles.
+
+        Alleles are considered to match if they are the same letter or if
+        the "." is used to denote any variant's allele (ANY).
+        """
+        if isinstance(other, MarkerInfo):
+            return self.markerinfo_eq(other)
+
+        return (self.locus_eq(other) and
+                (self.alleles == other.alleles or
+                 self.alleles == "ANY" or
+                 other.alleles == "ANY"))
+
+    def __hash__(self):
+        return hash((self.chrom, self.pos, self.alleles))
+
+    def __repr__(self):
+        return "<Variant chr{}:{}_[{}]>".format(self.chrom, self.pos,
+                                                ",".join(self.alleles))
 
 
-def apply_significance_threshold(df, p):
-    return df.loc[df["significance"] <= p, :]
-
-
-def get_reference(filename, **kwargs):
-    """Reads the reference panel in plink BED format."""
-    return format_map["plink"](
-        filename, representation=Representation.ADDITIVE, **kwargs
-    )
-
-
-def get_ld_candidates(df, chrom, pos, ld_window=None):
-    if ld_window is None:
-        ld_window = int(100e3)
-
-    df = df.loc[
-        (df["chrom"] == chrom) &
-        (df["pos"] >= pos - (ld_window // 2)) &
-        (df["pos"] <= pos + (ld_window // 2))
-    ]
-
-    # Find the position of the index SNP.
-    index = df.loc[df["pos"] == pos].index
-    if len(index) > 1:
-        raise ValueError("SNP is ambiguous in reference.")
-    elif len(index) == 0:
-        raise ValueError("Sentinel is not in reference.")
-
-    return index[0], df
-
-
-def greedy_select(df, reference):
-    ld_threshold = 0.5
-
-    selected = []
-    cur = df.index[0]
-    while True:
-        chrom, pos = df.loc[cur, ["chrom", "pos"]]
-
-        selected.append(cur)
-
-        ###
-        sentinel_index, ld_candidates = get_ld_candidates(df, chrom, pos)
-
-        # Compute LD with LD candidates.
-        bim = reference.bim
-        index = []
-        genotypes = []
-        for idx, candidate in ld_candidates.iterrows():
-            ref_snps = bim.loc[
-                (bim["chrom"] == candidate.chrom) &
-                (bim["pos"] == candidate.pos),
-                ["snp", "chrom", "pos"]
-            ]
-
-            # Because some positions can have multiple entries, we remember
-            # the point where we add the sentinel variant.
-            if idx == sentinel_index:
-                sentinel_index = len(index)
-
-            # There might be multiple SNPs at a given position in the
-            # reference.
-            for name, row in ref_snps.iterrows():
-                index.append((name, row.chrom, row.pos))
-                genotypes.append(
-                    reference.get_genotypes(name).genotypes.values[:, 0]
-                )
-
-        genotypes = np.array(genotypes).T
-        # TODO This computes all the pairs and we only need a single row.
-        ld_mat = ld(genotypes) ** 2
-
-        # Get the correlated positions.
-        correlated_indices = np.where(ld_mat[sentinel_index, :] > ld_threshold)
-        print(correlated_indices)
-        break
-
-        cur = df.index[0]
+def region_query(index, variant, padding):
+    index = index[variant.chrom]
+    left = bisect.bisect(index, variant.pos - padding // 2)
+    right = bisect.bisect(index, variant.pos + padding // 2)
+    return left, right
 
 
 def main():
-    columns = {
-        "chrom": "chrom",
-        "pos": "pos",
-        "effect_allele": "a1",
-        "reference_allele": "a2",
-        "coefficient": "beta",
-        "significance": "pvalue"
-    }
+    # Parameters
+    p_threshold = 5e-8
+    maf_threshold = 0.05
+    ld_threshold = 0.05
 
-    stats = parse_summary_statistics(
-        "/Users/legaultmarc/projects/StatGen/hdl_grs/data/summary.txt",
-        columns,
-        "\t"
+    # Selected variants.
+    out = []
+
+    # Variant to significance (initialized as a list but will be an
+    # OrderedDict).
+    summary = []
+
+    # Variant index for range queries.
+    # chromosome to sorted list of positions.
+    index = collections.defaultdict(list)
+
+    # Variant to genotypes.
+    genotypes = {}
+
+    # Read the summary statistics.
+    filename = "/Users/legaultmarc/projects/StatGen/hdl_grs/data/summary.txt"
+    with open(filename) as f:
+        f.readline()  # Header
+        for line in f:
+            chrom, pos, rsid, a1, a2, beta, se, p = line.strip().split("\t")
+            p = float(p)
+
+            # Completely ignore variants that do not pass the threshold.
+            if p > p_threshold:
+                continue
+
+            variant = Variant(chrom, pos, [a1, a2])
+
+            # Add variant to the summary statistics.
+            summary.append((variant, p))
+
+            # Keep an index for faster range queries.
+            index[chrom].append(variant)
+
+    # Sort the variants in the index to allow bisecting.
+    # We also remember the index positions which is useful for bisecting.
+    index_positions = {}
+    for chrom in index:
+        index[chrom] = sorted(index[chrom], key=lambda x: x.pos)
+        index_positions[chrom] = [i.pos for i in index[chrom]]
+
+    # Convert the summary statistics to an ordereddict of loci to p-values.
+    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1]))
+
+    # Extract the genotypes for all the variants in the summary.
+    reference = format_map["plink"](
+        "/Users/legaultmarc/projects/StatGen/grs/test_data/big",
+        representation=Representation.ADDITIVE
     )
 
-    stats = apply_significance_threshold(stats, p=5e-6)
+    for info in reference.iter_marker_info():
+        reference_variant = Variant(info.chrom, info.pos, [info.a1, info.a2])
 
-    reference = get_reference(
-        "/Users/legaultmarc/projects/StatGen/grs/test_data/big"
-    )
+        if reference_variant in summary:
+            g = reference.get_genotypes(info.marker).genotypes["geno"]
+            maf, minor, major, flip = get_maf(g, info.a1, info.a2)
 
-    choices = greedy_select(stats, reference)
+            if maf > maf_threshold:
+                # Standardize.
+                g = g.values
+                g = (g - np.nanmean(g)) / np.nanstd(g)
+                genotypes[reference_variant] = g
+
+    while len(summary) > 0:
+        cur, p = summary.popitem(last=False)
+        while cur not in genotypes:
+            cur, p = summary.popitem(last=False)
+
+        cur_geno = genotypes[cur]
+
+        left, right = region_query(index_positions, cur, int(100e3))
+        loci = index[cur.chrom][left:right]
+
+        # Build the matrix.
+        other_genotypes = []
+        retained_loci = []
+
+        for locus in loci:
+            geno = genotypes.get(locus)
+
+            if locus == cur:
+                continue
+
+            if geno is None:
+                # Remove variants that have no genotype data in the reference
+                # or that failed because of MAF thresholds.
+                del summary[locus]
+
+            else:
+                other_genotypes.append(geno)
+                retained_loci.append(locus)
+
+        other_genotypes = np.array(other_genotypes).T
+
+        # Compute the LD in block.
+        cur_nan = np.isnan(cur_geno)
+        nans = np.isnan(other_genotypes)
+
+        n = np.sum(~cur_nan) - nans.sum(axis=0)
+
+        other_genotypes[nans] = 0
+        cur_geno[cur_nan] = 0
+
+        r2 = (np.dot(cur_geno, other_genotypes) / n) ** 2
+
+        # Remove all the correlated variants.
+        for variant, pair_ld in zip(retained_loci, r2):
+            if pair_ld > ld_threshold:
+                del summary[variant]
+
+        print("Remaining {} variants.".format(len(summary)))
+
+    with open("dump.pkl", "wb") as f:
+        pickle.dump(summary, f)
