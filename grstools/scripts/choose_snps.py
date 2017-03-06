@@ -12,7 +12,8 @@ Ideas:
 
 """
 
-import pickle
+import argparse
+import logging
 import bisect
 import collections
 
@@ -21,6 +22,9 @@ from genetest.genotypes.core import Representation, MarkerInfo
 from genetest.statistics.descriptive import get_maf
 
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
 
 
 class Variant(object):
@@ -71,7 +75,7 @@ def region_query(index, variant, padding):
     return left, right
 
 
-def read_summary_statistics(filename, p_threshold):
+def read_summary_statistics(filename, p_threshold, sep="\t"):
     # Variant to significance (initialized as a list but will be an
     # OrderedDict).
     summary = []
@@ -81,19 +85,33 @@ def read_summary_statistics(filename, p_threshold):
     index = collections.defaultdict(list)
 
     with open(filename) as f:
-        f.readline()  # Header
+        header = f.readline().strip().split(sep)
+        header = {v: k for k, v in enumerate(header)}
+
         for line in f:
-            chrom, pos, rsid, a1, a2, beta, se, p = line.strip().split("\t")
-            p = float(p)
+            line = line.strip().split(sep)
+
+            # Locus information
+            name = line[header["name"]]
+            chrom = line[header["chrom"]]
+            pos = int(line[header["pos"]])
+
+            # Statistics
+            p = float(line[header["p-value"]])
+            effect = float(line[header["effect"]])
+
+            # Alleles
+            reference = line[header["reference"]]
+            risk = line[header["risk"]]
 
             # Completely ignore variants that do not pass the threshold.
             if p > p_threshold:
                 continue
 
-            variant = Variant(chrom, pos, [a1, a2])
+            variant = Variant(chrom, pos, [reference, risk])
 
             # Add variant to the summary statistics.
-            summary.append((variant, p))
+            summary.append((variant, (p, name, effect, reference, risk)))
 
             # Keep an index for faster range queries.
             index[chrom].append(variant)
@@ -101,6 +119,9 @@ def read_summary_statistics(filename, p_threshold):
     # Sort the index.
     for chrom in index:
         index[chrom] = sorted(index[chrom], key=lambda x: x.pos)
+
+    # Convert the summary statistics to an ordereddict of loci to stats.
+    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1][0]))
 
     return summary, index
 
@@ -174,7 +195,7 @@ def compute_ld(cur_geno, other_genotypes):
     return (np.dot(cur_geno, other_genotypes) / n) ** 2
 
 
-def greedy_pick_clump(summary, genotypes, index, ld_threshold):
+def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
     out = []
 
     # Extract the positions from the index to comply with the bisect API.
@@ -185,18 +206,19 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold):
     while len(summary) > 0:
 
         # Get the next best variant.
-        cur, p = summary.popitem(last=False)
+        cur, info = summary.popitem(last=False)
         if cur not in genotypes:
             continue
 
         # Add it to the GRS.
-        out.append(cur)
+        p, name, effect, reference, risk = info
+        out.append((name, cur.chrom, cur.pos, reference, risk, effect))
 
         # Get the genotypes for the current variant.
         cur_geno = genotypes[cur]
 
         # Do a region query in the index to get neighbouring variants.
-        left, right = region_query(index_positions, cur, int(100e3))
+        left, right = region_query(index_positions, cur, ld_window_size)
         loci = index[cur.chrom][left:right]  # TODO Check the indexing.
 
         # Extract genotypes.
@@ -205,7 +227,9 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold):
         )
 
         if len(retained_loci) == 0:
-            print("Variant has no neighbour with genotypes ({})".format(cur))
+            logger.debug(
+                "Variant has no neighbour with genotypes ({})".format(cur)
+            )
             continue
 
         # Compute the LD between all the neighbouring variants and the current
@@ -217,29 +241,91 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold):
             if pair_ld > ld_threshold:
                 del summary[variant]
 
-        print("Remaining {} variants.".format(len(summary)))
+        logger.debug("Remaining {} variants.".format(len(summary)))
+
+    return out
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--p-threshold",
+        help="P-value threshold for inclusion in the GRS (default: 5e-8).",
+        default=5e-8
+    )
+
+    parser.add_argument(
+        "--maf-threshold",
+        help="Minimum MAF to allow inclusion in the GRS (default %(default)s).",
+        default=0.05,
+    )
+
+    parser.add_argument(
+        "--ld-threshold",
+        help=("LD threshold for the clumping step. All variants in LD with "
+              "variants in the GRS are excluded iteratively (default "
+              "%(default)s)."),
+        default=0.05,
+    )
+
+    parser.add_argument(
+        "--ld-window-size",
+        help=("Size of the LD window used to find correlated variants. "
+              "Making this window smaller will make the execution faster but "
+              "increases the chance of missing correlated variants "
+              "(default 500kb)."),
+        default=int(500e3),
+    )
+
+    # Files
+    parser.add_argument(
+        "--summary",
+        help=("Path to the summary statistics files. Required columns are "
+              "'name', 'chrom', 'pos', 'p-value', 'effect', 'reference' and "
+              "'risk'."),
+        required=True
+    )
+
+    parser.add_argument(
+        "--reference",
+        help=("Path the binary plink file containing reference genotypes. "
+              "These genotypes will be used for LD clumping."),
+        required=True
+    )
+
+    parser.add_argument(
+        "--output", "-o",
+        help="Output filename (default: %(default)s).",
+        default="selected.grs"
+    )
+
+    return parser.parse_args()
 
 
 def main():
+    args = parse_args()
+
     # Parameters
-    p_threshold = 5e-8
-    maf_threshold = 0.05
-    ld_threshold = 0.05
+    p_threshold = args.p_threshold
+    maf_threshold = args.maf_threshold
+    ld_threshold = args.ld_threshold
+    ld_window_size = args.ld_window_size
+
+    summary_filename = args.summary
+    reference_filename = args.reference
+    output_filename = args.output
 
     # Read the summary statistics.
-    filename = "/Users/legaultmarc/projects/StatGen/hdl_grs/data/summary.txt"
-    summary, index = read_summary_statistics(filename, p_threshold)
+    summary, index = read_summary_statistics(summary_filename, p_threshold)
 
-    # Convert the summary statistics to an ordereddict of loci to p-values.
-    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1]))
+    genotypes = extract_genotypes(reference_filename, summary, maf_threshold)
 
-    genotypes = extract_genotypes(
-        "/Users/legaultmarc/projects/StatGen/grs/test_data/big",
-        summary,
-        maf_threshold
-    )
+    grs = greedy_pick_clump(summary, genotypes, index, ld_threshold,
+                            ld_window_size)
 
-    grs = greedy_pick_clump(summary, genotypes, index, ld_threshold)
-
-    with open("dump.pkl", "wb") as f:
-        pickle.dump(grs, f)
+    with open(output_filename, "w") as f:
+        f.write("name,chrom,pos,reference,risk,effect\n")
+        for tu in grs:
+            f.write(",".join([str(i) for i in tu]))
+            f.write("\n")
