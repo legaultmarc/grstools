@@ -7,6 +7,7 @@ import argparse
 
 import pandas as pd
 import numpy as np
+import scipy.stats
 import matplotlib.pyplot as plt
 
 
@@ -62,6 +63,44 @@ def standardize(args):
     data.to_csv(out)
 
 
+def correlation(args):
+    grs1 = _read_grs(args.grs_filename)
+    grs1.columns = ["grs1"]
+
+    grs2 = _read_grs(args.grs_filename2)
+    grs2.columns = ["grs2"]
+
+    grs = pd.merge(grs1, grs2, left_index=True, right_index=True, how="inner")
+
+    if grs.shape[0] == 0:
+        raise ValueError("No overlapping samples between the two GRS.")
+
+    linreg = scipy.stats.linregress
+    slope, intercept, r_value, p_value, std_err = linreg(grs["grs1"],
+                                                         grs["grs2"])
+
+    plt.scatter(grs["grs1"], grs["grs2"], marker=".", s=1, c="#444444",
+                label="data")
+
+    xmin = np.min(grs["grs1"])
+    xmax = np.max(grs["grs1"])
+
+    x = np.linspace(xmin, xmax, 2000)
+    y = slope * x + intercept
+
+    plt.plot(
+        x, y,
+        label=("GRS2 = {:.2f} GRS1 + {:.2f} ($R^2={:.2f}$)"
+               "".format(slope, intercept, r_value ** 2))
+    )
+
+    plt.xlabel("GRS1")
+    plt.ylabel("GRS2")
+
+    plt.legend()
+    plt.show()
+
+
 def main():
     args = parse_args()
 
@@ -69,6 +108,7 @@ def main():
         "histogram": histogram,
         "quantiles": quantiles,
         "standardize": standardize,
+        "correlation": correlation,
     }
 
     command_handlers[args.command](args)
@@ -129,6 +169,18 @@ def parse_args():
         "standardize",
         help="Standardize the GRS (grs <- (grs - mean) / std).",
         parents=[parent]
+    )
+
+    # Correlation
+    correlation = subparser.add_parser(
+        "correlation",
+        help="Plot the correlation between two GRS.",
+        parents=[parent]
+    )
+
+    correlation.add_argument(
+        "grs_filename2",
+        help="Filename of the second GRS."
     )
 
     return parser.parse_args()

@@ -1,5 +1,4 @@
 """
- 
 Choose SNPs from GWAS summary statistics.
 
 Method 1:
@@ -21,10 +20,7 @@ from genetest.genotypes import format_map
 from genetest.genotypes.core import Representation, MarkerInfo
 from genetest.statistics.descriptive import get_maf
 
-import pandas as pd
 import numpy as np
-
-from .match_snps import ld
 
 
 class Variant(object):
@@ -75,14 +71,7 @@ def region_query(index, variant, padding):
     return left, right
 
 
-def main():
-    # Parameters
-    p_threshold = 5e-8
-    maf_threshold = 0.05
-    ld_threshold = 0.05
-
-    out = []
-
+def read_summary_statistics(filename, p_threshold):
     # Variant to significance (initialized as a list but will be an
     # OrderedDict).
     summary = []
@@ -91,11 +80,6 @@ def main():
     # chromosome to sorted list of positions.
     index = collections.defaultdict(list)
 
-    # Variant to genotypes.
-    genotypes = {}
-
-    # Read the summary statistics.
-    filename = "/Users/legaultmarc/projects/StatGen/hdl_grs/data/summary.txt"
     with open(filename) as f:
         f.readline()  # Header
         for line in f:
@@ -114,19 +98,19 @@ def main():
             # Keep an index for faster range queries.
             index[chrom].append(variant)
 
-    # Sort the variants in the index to allow bisecting.
-    # We also remember the index positions which is useful for bisecting.
-    index_positions = {}
+    # Sort the index.
     for chrom in index:
         index[chrom] = sorted(index[chrom], key=lambda x: x.pos)
-        index_positions[chrom] = [i.pos for i in index[chrom]]
 
-    # Convert the summary statistics to an ordereddict of loci to p-values.
-    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1]))
+    return summary, index
+
+
+def extract_genotypes(filename, summary, maf_threshold):
+    genotypes = {}
 
     # Extract the genotypes for all the variants in the summary.
     reference = format_map["plink"](
-        "/Users/legaultmarc/projects/StatGen/grs/test_data/big",
+        filename,
         representation=Representation.ADDITIVE
     )
 
@@ -143,60 +127,90 @@ def main():
                 g = (g - np.nanmean(g)) / np.nanstd(g)
                 genotypes[reference_variant] = g
 
+    return genotypes
+
+
+def build_genotype_matrix(cur, loci, genotypes, summary):
+    # Build the genotype matrix from all the neighbouring variants with
+    # available genotypes. The retained loci list will contain the
+    # corresponding varinat objects.
+    other_genotypes = []
+    retained_loci = []
+
+    for locus in loci:
+        geno = genotypes.get(locus)
+
+        if locus == cur:
+            continue
+
+        if geno is None:
+            # Remove variants that have no genotype data in the reference
+            # or that failed because of MAF thresholds.
+            try:
+                del summary[locus]
+            except KeyError:
+                pass
+
+        # We only keep loci that have not been excluded yet.
+        elif locus in summary:
+            other_genotypes.append(geno)
+            retained_loci.append(locus)
+
+    other_genotypes = np.array(other_genotypes).T
+
+    return other_genotypes, retained_loci
+
+
+def compute_ld(cur_geno, other_genotypes):
+    # Compute the LD in block.
+    cur_nan = np.isnan(cur_geno)
+    nans = np.isnan(other_genotypes)
+
+    n = np.sum(~cur_nan) - nans.sum(axis=0)
+
+    other_genotypes[nans] = 0
+    cur_geno[cur_nan] = 0
+
+    return (np.dot(cur_geno, other_genotypes) / n) ** 2
+
+
+def greedy_pick_clump(summary, genotypes, index, ld_threshold):
+    out = []
+
+    # Extract the positions from the index to comply with the bisect API.
+    index_positions = {}
+    for chrom in index:
+        index_positions[chrom] = [i.pos for i in index[chrom]]
+
     while len(summary) > 0:
+
+        # Get the next best variant.
         cur, p = summary.popitem(last=False)
         if cur not in genotypes:
             continue
 
+        # Add it to the GRS.
         out.append(cur)
 
+        # Get the genotypes for the current variant.
         cur_geno = genotypes[cur]
 
+        # Do a region query in the index to get neighbouring variants.
         left, right = region_query(index_positions, cur, int(100e3))
-        loci = index[cur.chrom][left:right]
+        loci = index[cur.chrom][left:right]  # TODO Check the indexing.
 
-        # Build the matrix.
-        other_genotypes = []
-        retained_loci = []
+        # Extract genotypes.
+        other_genotypes, retained_loci = build_genotype_matrix(
+            cur, loci, genotypes, summary
+        )
 
-        # For all the loci in this region we match with the reference to
-        # build a genotype matrix.
-        for locus in loci:
-            geno = genotypes.get(locus)
-
-            if locus == cur:
-                continue
-
-            if geno is None:
-                # Remove variants that have no genotype data in the reference
-                # or that failed because of MAF thresholds.
-                try:
-                    del summary[locus]
-                except KeyError:
-                    pass
-
-            # We only keep loci that have not been excluded yet.
-            elif locus in summary:
-                other_genotypes.append(geno)
-                retained_loci.append(locus)
-
-        other_genotypes = np.array(other_genotypes).T
-
-        # Only variant in locus.
-        if other_genotypes.shape[0] == 0:
-            print("Singleton: {}".format(cur))
+        if len(retained_loci) == 0:
+            print("Variant has no neighbour with genotypes ({})".format(cur))
             continue
 
-        # Compute the LD in block.
-        cur_nan = np.isnan(cur_geno)
-        nans = np.isnan(other_genotypes)
-
-        n = np.sum(~cur_nan) - nans.sum(axis=0)
-
-        other_genotypes[nans] = 0
-        cur_geno[cur_nan] = 0
-
-        r2 = (np.dot(cur_geno, other_genotypes) / n) ** 2
+        # Compute the LD between all the neighbouring variants and the current
+        # variant.
+        r2 = compute_ld(cur_geno, other_genotypes)
 
         # Remove all the correlated variants.
         for variant, pair_ld in zip(retained_loci, r2):
@@ -205,5 +219,27 @@ def main():
 
         print("Remaining {} variants.".format(len(summary)))
 
+
+def main():
+    # Parameters
+    p_threshold = 5e-8
+    maf_threshold = 0.05
+    ld_threshold = 0.05
+
+    # Read the summary statistics.
+    filename = "/Users/legaultmarc/projects/StatGen/hdl_grs/data/summary.txt"
+    summary, index = read_summary_statistics(filename, p_threshold)
+
+    # Convert the summary statistics to an ordereddict of loci to p-values.
+    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1]))
+
+    genotypes = extract_genotypes(
+        "/Users/legaultmarc/projects/StatGen/grs/test_data/big",
+        summary,
+        maf_threshold
+    )
+
+    grs = greedy_pick_clump(summary, genotypes, index, ld_threshold)
+
     with open("dump.pkl", "wb") as f:
-        pickle.dump(out, f)
+        pickle.dump(grs, f)
