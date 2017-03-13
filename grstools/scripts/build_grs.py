@@ -38,9 +38,11 @@ def compute_grs(grs, geno, alleles, skip_bad_alleles=False):
         if a.minor == risk and a.major == reference:
             # No need to flip and alleles are correct.
             pass
+
         elif a.minor == reference and a.major == risk:
             # Need to flip.
             geno[variant] = 2.0 - geno[variant]
+
         else:
             # Alleles are discordant.
             if skip_bad_alleles:

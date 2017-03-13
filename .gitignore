@@ -1,3 +1,6 @@
 *.swp
 *.pyc
 *.egg-info
+doc/build
+doc/source/includes/*_help.txt
+.idea

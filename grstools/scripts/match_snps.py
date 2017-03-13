@@ -312,7 +312,10 @@ def main():
                 line = [
                     i if i != "" else None for i in line.strip().split(",")
                 ]
-                assert len(line) == 5
+                if len(line) != 5:
+                    raise ValueError(
+                        "Unexpected format: line: {}".format(line)
+                    )
 
                 buf.append(line)
                 if len(buf) > 5000:

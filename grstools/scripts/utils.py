@@ -8,6 +8,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import scipy.stats
+import matplotlib
 import matplotlib.pyplot as plt
 
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 plt.style.use("ggplot")
+matplotlib.rc("font", size="6")
 
 
 def _read_grs(filename):
@@ -86,18 +88,22 @@ def correlation(args):
     xmax = np.max(grs["grs1"])
 
     x = np.linspace(xmin, xmax, 2000)
-    y = slope * x + intercept
 
     plt.plot(
-        x, y,
+        x, slope * x + intercept,
         label=("GRS2 = {:.2f} GRS1 + {:.2f} ($R^2={:.2f}$)"
-               "".format(slope, intercept, r_value ** 2))
+               "".format(slope, intercept, r_value ** 2)),
+        linewidth=0.5
     )
+
+    plt.plot(x, x, label="GRS2 = GRS1", linestyle="--", linewidth=0.5,
+             color="#777777")
 
     plt.xlabel("GRS1")
     plt.ylabel("GRS2")
 
     plt.legend()
+    plt.tight_layout()
     plt.show()
 
 
