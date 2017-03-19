@@ -49,6 +49,7 @@ def read_summary_statistics(filename, p_threshold, sep=","):
 
     # TODO If we're going to build the summary as a list, we should at least
     # make this parallel.
+    # For now, this is really not the limiting step.
     for name, info in df.iterrows():
         if info["p-value"] > p_threshold:
             break
@@ -79,34 +80,31 @@ def extract_genotypes(filename, summary, maf_threshold):
     # Extract the genotypes for all the variants in the summary.
     reference = geneparse.parsers["plink"](filename)
 
-    for reference_variant in reference.iter_variants():
-        if reference_variant in summary:
-            g = reference.get_variant_genotypes(reference_variant)
-            if len(g) == 0:
-                raise ValueError("This should not happen.")
-            elif len(g) == 1:
-                g = g[0]
-            else:
-                # TODO
-                print(reference_variant)
-                for i in g:
-                    print("->", i)
-                logger.warning(
-                    "Ignoring {}: Multiallelics or duplicated variants are "
-                    "not handled.".format(reference_variant)
-                )
-                continue
+    no_geno = []
 
-            g = g.genotypes
+    for variant, stats in summary.items():
+        ref_geno = reference.get_variant_genotypes(variant)
+
+        if len(ref_geno) == 0:
+            no_geno.append(variant)
+
+        elif len(ref_geno) == 1:
+            g = ref_geno[0].genotypes
+
+            # Compute the maf.
             mean = np.nanmean(g)
-
-            # TODO Division could be avoided by manipulating maf_threshold.
             maf = mean / 2
 
             if maf > maf_threshold:
                 # Standardize.
                 g = (g - mean) / np.nanstd(g)
-                genotypes[reference_variant] = g
+                genotypes[variant] = g
+
+        else:
+            logger.warning(
+                "Ignoring {} (multiallelic or dup)."
+                "".format(variant)
+            )
 
     return genotypes
 
