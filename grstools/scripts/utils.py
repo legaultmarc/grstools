@@ -122,7 +122,7 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Utilities to manipulated computed GRS."
+        description="Utilities to manipulate computed GRS."
     )
 
     parent = argparse.ArgumentParser(add_help=False)

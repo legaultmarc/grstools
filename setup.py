@@ -22,7 +22,7 @@ def setup_package():
         packages=find_packages(exclude=["tests", ]),
         entry_points={
             "console_scripts": [
-                "grs-match-snps=grstools.scripts.match_snps:main",
+                "grs-evaluate=grstools.scripts.evaluate:main",
                 "grs-compute=grstools.scripts.build_grs:main",
                 "grs-utils=grstools.scripts.utils:main",
                 "grs-create=grstools.scripts.choose_snps:main",

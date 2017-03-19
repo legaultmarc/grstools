@@ -17,55 +17,16 @@ import logging
 import bisect
 import collections
 
-from genetest.genotypes import format_map
-from genetest.genotypes.core import Representation, MarkerInfo
-from genetest.statistics.descriptive import get_maf
+import geneparse
 
 import numpy as np
 
+from ..utils import parse_grs_file
+
 
 logger = logging.getLogger(__name__)
-
-
-class Variant(object):
-    __slots__ = ("chrom", "pos", "alleles")
-
-    def __init__(self, chrom, pos, alleles=None):
-        self.chrom = str(chrom)
-        self.pos = int(pos)
-
-        if alleles is None or "." in alleles:
-            self.alleles = "ANY"
-        else:
-            self.alleles = frozenset([i.lower() for i in alleles])
-
-    def locus_eq(self, other):
-        """Chromosome and position match."""
-        return (
-            self.chrom == other.chrom and
-            self.pos == other.pos
-        )
-
-    def __eq__(self, other):
-        """Equality is defined as being the same locus and matching alleles.
-
-        Alleles are considered to match if they are the same letter or if
-        the "." is used to denote any variant's allele (ANY).
-        """
-        if isinstance(other, MarkerInfo):
-            return self.markerinfo_eq(other)
-
-        return (self.locus_eq(other) and
-                (self.alleles == other.alleles or
-                 self.alleles == "ANY" or
-                 other.alleles == "ANY"))
-
-    def __hash__(self):
-        return hash((self.chrom, self.pos, self.alleles))
-
-    def __repr__(self):
-        return "<Variant chr{}:{}_[{}]>".format(self.chrom, self.pos,
-                                                ",".join(self.alleles))
+logger.setLevel(logging.DEBUG)
+logger.debug("Starting up")
 
 
 def region_query(index, variant, padding):
@@ -75,46 +36,32 @@ def region_query(index, variant, padding):
     return left, right
 
 
-def read_summary_statistics(filename, p_threshold, sep="\t"):
-    # Variant to significance (initialized as a list but will be an
-    # OrderedDict).
+def read_summary_statistics(filename, p_threshold, sep=","):
+    # Variant to stats orderedict (but constructed as a list).
     summary = []
 
     # Variant index for range queries.
     # chromosome to sorted list of positions.
     index = collections.defaultdict(list)
 
-    with open(filename) as f:
-        header = f.readline().strip().split(sep)
-        header = {v: k for k, v in enumerate(header)}
+    df = parse_grs_file(filename, p_threshold=p_threshold, sep=sep)
+    df.sort_values("p-value", inplace=True)
 
-        for line in f:
-            line = line.strip().split(sep)
+    # TODO If we're going to build the summary as a list, we should at least
+    # make this parallel.
+    for name, info in df.iterrows():
+        if info["p-value"] > p_threshold:
+            break
 
-            # Locus information
-            name = line[header["name"]]
-            chrom = line[header["chrom"]]
-            pos = int(line[header["pos"]])
+        variant = geneparse.Variant(name, info.chrom, info.pos,
+                                    [info.reference, info.risk])
 
-            # Statistics
-            p = float(line[header["p-value"]])
-            effect = float(line[header["effect"]])
+        summary.append((
+            variant,
+            (info["p-value"], name, info.effect, info.reference, info.risk)
+        ))
 
-            # Alleles
-            reference = line[header["reference"]]
-            risk = line[header["risk"]]
-
-            # Completely ignore variants that do not pass the threshold.
-            if p > p_threshold:
-                continue
-
-            variant = Variant(chrom, pos, [reference, risk])
-
-            # Add variant to the summary statistics.
-            summary.append((variant, (p, name, effect, reference, risk)))
-
-            # Keep an index for faster range queries.
-            index[chrom].append(variant)
+        index[info.chrom].append(variant)
 
     # Sort the index.
     for chrom in index:
@@ -130,25 +77,63 @@ def extract_genotypes(filename, summary, maf_threshold):
     genotypes = {}
 
     # Extract the genotypes for all the variants in the summary.
-    reference = format_map["plink"](
-        filename,
-        representation=Representation.ADDITIVE
-    )
+    reference = geneparse.parsers["plink"](filename)
 
-    for info in reference.iter_marker_info():
-        reference_variant = Variant(info.chrom, info.pos, [info.a1, info.a2])
-
+    for reference_variant in reference.iter_variants():
         if reference_variant in summary:
-            g = reference.get_genotypes(info.marker).genotypes["geno"]
-            maf, minor, major, flip = get_maf(g, info.a1, info.a2)
+            g = reference.get_variant_genotypes(reference_variant)
+            if len(g) == 0:
+                raise ValueError("This should not happen.")
+            elif len(g) == 1:
+                g = g[0]
+            else:
+                # TODO
+                print(reference_variant)
+                for i in g:
+                    print("->", i)
+                logger.warning(
+                    "Ignoring {}: Multiallelics or duplicated variants are "
+                    "not handled.".format(reference_variant)
+                )
+                continue
+
+            g = g.genotypes
+            mean = np.nanmean(g)
+
+            # TODO Division could be avoided by manipulating maf_threshold.
+            maf = mean / 2
 
             if maf > maf_threshold:
                 # Standardize.
-                g = g.values
-                g = (g - np.nanmean(g)) / np.nanstd(g)
+                g = (g - mean) / np.nanstd(g)
                 genotypes[reference_variant] = g
 
     return genotypes
+
+
+def _worker_extract_genotypes(lock, queue, variant, reference, summary,
+                              maf_threshold):
+    if variant in summary:
+        # Get the genotypes.
+        with lock:
+            g = reference.get_variant_genotypes
+        if len(g) == 0:
+            raise ValueError("This should not happen.")
+        elif len(g) == 1:
+            # Single variant match.
+            g = g[0]
+        else:
+            # TODO Handle duplicates and multi-allelics.
+            return
+
+        g = g.genotypes
+        mean = np.nanmean(g)
+
+        maf = mean / 2
+
+        if maf > maf_threshold:
+            g = (g - mean) / np.nanstd(g)
+            queue.put((variant, g))
 
 
 def build_genotype_matrix(cur, loci, genotypes, summary):
@@ -203,11 +188,16 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
     for chrom in index:
         index_positions[chrom] = [i.pos for i in index[chrom]]
 
+    logger.debug(
+        "Starting the greedy SNP selection with {} candidates."
+        "".format(len(summary))
+    )
     while len(summary) > 0:
 
         # Get the next best variant.
         cur, info = summary.popitem(last=False)
         if cur not in genotypes:
+            logger.debug("No genotypes for {}.".format(cur))
             continue
 
         # Add it to the GRS.
@@ -241,7 +231,9 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
             if pair_ld > ld_threshold:
                 del summary[variant]
 
-        logger.debug("Remaining {} variants.".format(len(summary)))
+        logger.debug("Chose {} variants, remaining {}.".format(
+            len(out), len(summary)
+        ))
 
     return out
 
@@ -252,13 +244,15 @@ def parse_args():
     parser.add_argument(
         "--p-threshold",
         help="P-value threshold for inclusion in the GRS (default: 5e-8).",
-        default=5e-8
+        default=5e-8,
+        type=float
     )
 
     parser.add_argument(
         "--maf-threshold",
         help="Minimum MAF to allow inclusion in the GRS (default %(default)s).",
         default=0.05,
+        type=float
     )
 
     parser.add_argument(
@@ -267,6 +261,7 @@ def parse_args():
               "variants in the GRS are excluded iteratively (default "
               "%(default)s)."),
         default=0.05,
+        type=float
     )
 
     parser.add_argument(
@@ -276,6 +271,7 @@ def parse_args():
               "increases the chance of missing correlated variants "
               "(default 500kb)."),
         default=int(500e3),
+        type=int
     )
 
     # Files
@@ -317,13 +313,17 @@ def main():
     output_filename = args.output
 
     # Read the summary statistics.
+    logger.info("Reading summary statistics.")
     summary, index = read_summary_statistics(summary_filename, p_threshold)
 
+    logger.info("Extracting genotypes.")
     genotypes = extract_genotypes(reference_filename, summary, maf_threshold)
 
+    logger.info("Perform greedy selection.")
     grs = greedy_pick_clump(summary, genotypes, index, ld_threshold,
                             ld_window_size)
 
+    logger.info("Writing the file containing the final selection.")
     with open(output_filename, "w") as f:
         f.write("name,chrom,pos,reference,risk,effect\n")
         for tu in grs:

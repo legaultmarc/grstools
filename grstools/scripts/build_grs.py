@@ -1,5 +1,5 @@
 """
-Compute the GRS from genotypes, a GRS file and a name mapping.
+Compute the GRS from genotypes and a GRS file.
 """
 
 import os

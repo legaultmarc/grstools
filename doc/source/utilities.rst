@@ -1,14 +1,6 @@
 Command-line utilities
 =======================
 
-Summary of the tools:
-
-- :ref:`grs-compute`: Calculate the GRS for individuals.
-- :ref:`grs-create`: Choose variants to include in a GRS.
-- :ref:`grs-match-snps`: Create a mapping file of variant names to bridge
-  datasets.
-- :ref:`grs-utils`: Various utilities to manage GRS.
-
 .. grs-compute
 .. _grs-compute:
 
