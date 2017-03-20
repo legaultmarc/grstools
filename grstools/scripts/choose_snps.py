@@ -24,9 +24,10 @@ import numpy as np
 from ..utils import parse_grs_file
 
 
+debug = False
+
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-logger.debug("Starting up")
+logger.debug("Starting")
 
 
 class Row(object):
@@ -53,16 +54,27 @@ class Row(object):
 
     @property
     def _fields(self):
-        return [
+        fields = [
             self.name, self.chrom, self.pos, self.reference, self.risk,
             self.p_value, self.effect
         ]
 
         if self.maf is not None:
-            self._fields.append(self.maf)
+            fields.append(self.maf)
+
+        return fields
 
     def write(self, f, sep=","):
-        f.write(sep.join([str(i) for i in self._fields]) + "\n")
+        for i, field in enumerate(self._fields):
+            if i != 0:
+                f.write(",")
+
+            if type(field) is float:
+                f.write("{:.9g}".format(field))
+            else:
+                f.write(str(field))
+
+        f.write("\n")
 
 
 def region_query(index, variant, padding):
@@ -72,7 +84,8 @@ def region_query(index, variant, padding):
     return left, right
 
 
-def read_summary_statistics(filename, p_threshold, sep=","):
+def read_summary_statistics(filename, p_threshold, sep=",",
+                            keep_ambiguous=False):
     # Variant to stats orderedict (but constructed as a list).
     summary = []
 
@@ -83,15 +96,17 @@ def read_summary_statistics(filename, p_threshold, sep=","):
     df = parse_grs_file(filename, p_threshold=p_threshold, sep=sep)
     df.sort_values("p-value", inplace=True)
 
-    # TODO If we're going to build the summary as a list, we should at least
-    # make this parallel.
-    # For now, this is really not the limiting step.
+    # For now, this is not a limiting step, but it might be nice to parallelize
+    # this eventually.
     for name, info in df.iterrows():
         if info["p-value"] > p_threshold:
             break
 
         variant = geneparse.Variant(name, info.chrom, info.pos,
                                     [info.reference, info.risk])
+
+        if variant.alleles_ambiguous() and not keep_ambiguous:
+            continue
 
         row_args = [name, info.chrom, info.pos, info.reference, info.risk,
                     info["p-value"], info.effect]
@@ -121,13 +136,16 @@ def extract_genotypes(filename, summary, maf_threshold):
     # Extract the genotypes for all the variants in the summary.
     reference = geneparse.parsers["plink"](filename)
 
-    no_geno = []
-
     for variant, stats in summary.items():
+        # Check if MAF is already known.
+        if stats.maf is not None:
+            if stats.maf < maf_threshold:
+                continue
+
         ref_geno = reference.get_variant_genotypes(variant)
 
         if len(ref_geno) == 0:
-            no_geno.append(variant)
+            logger.warning("No genotypes for {}.".format(variant))
 
         elif len(ref_geno) == 1:
             g = ref_geno[0].genotypes
@@ -136,7 +154,7 @@ def extract_genotypes(filename, summary, maf_threshold):
             mean = np.nanmean(g)
             maf = mean / 2
 
-            if maf > maf_threshold:
+            if maf >= maf_threshold:
                 # Standardize.
                 g = (g - mean) / np.nanstd(g)
                 genotypes[variant] = g
@@ -150,39 +168,18 @@ def extract_genotypes(filename, summary, maf_threshold):
     return genotypes
 
 
-def _worker_extract_genotypes(lock, queue, variant, reference, summary,
-                              maf_threshold):
-    if variant in summary:
-        # Get the genotypes.
-        with lock:
-            g = reference.get_variant_genotypes
-        if len(g) == 0:
-            raise ValueError("This should not happen.")
-        elif len(g) == 1:
-            # Single variant match.
-            g = g[0]
-        else:
-            # TODO Handle duplicates and multi-allelics.
-            return
-
-        g = g.genotypes
-        mean = np.nanmean(g)
-
-        maf = mean / 2
-
-        if maf > maf_threshold:
-            g = (g - mean) / np.nanstd(g)
-            queue.put((variant, g))
-
-
 def build_genotype_matrix(cur, loci, genotypes, summary):
-    # Build the genotype matrix from all the neighbouring variants with
-    # available genotypes. The retained loci list will contain the
-    # corresponding varinat objects.
+    """Build the genotype matrix of neighbouring variants.
+
+    This will return a tuple containing the genotype matrix and a list of
+    variant objects corresponding to the columns of the matrix.
+
+    """
     other_genotypes = []
     retained_loci = []
 
     for locus in loci:
+        # Get the genotypes in the reference.
         geno = genotypes.get(locus)
 
         if locus == cur:
@@ -219,7 +216,8 @@ def compute_ld(cur_geno, other_genotypes):
     return (np.dot(cur_geno, other_genotypes) / n) ** 2
 
 
-def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
+def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
+                      target_n=None):
     out = []
 
     # Extract the positions from the index to comply with the bisect API.
@@ -227,16 +225,13 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
     for chrom in index:
         index_positions[chrom] = [i.pos for i in index[chrom]]
 
-    logger.debug(
-        "Starting the greedy SNP selection with {} candidates."
-        "".format(len(summary))
-    )
     while len(summary) > 0:
 
         # Get the next best variant.
         cur, info = summary.popitem(last=False)
+        logger.debug("CUR <- {} (p={})".format(cur, info.p_value))
         if cur not in genotypes:
-            logger.debug("No genotypes for {}.".format(cur))
+            logger.debug("\tNEXT (no genotypes)")
             continue
 
         # Add it to the GRS.
@@ -247,7 +242,7 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
 
         # Do a region query in the index to get neighbouring variants.
         left, right = region_query(index_positions, cur, ld_window_size)
-        loci = index[cur.chrom][left:right]  # TODO Check the indexing.
+        loci = index[cur.chrom][left:right]
 
         # Extract genotypes.
         other_genotypes, retained_loci = build_genotype_matrix(
@@ -255,9 +250,7 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
         )
 
         if len(retained_loci) == 0:
-            logger.debug(
-                "Variant has no neighbour with genotypes ({})".format(cur)
-            )
+            logger.debug("\tNO_CLUMP (variant alone)")
             continue
 
         # Compute the LD between all the neighbouring variants and the current
@@ -265,13 +258,29 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
         r2 = compute_ld(cur_geno, other_genotypes)
 
         # Remove all the correlated variants.
+        logger.debug(
+            "\tLD_REGION FROM {} TO {} ({}:{}-{})"
+            "".format(retained_loci[0], retained_loci[-1], cur.chrom,
+                      cur.pos - ld_window_size // 2,
+                      cur.pos + ld_window_size // 2)
+        )
+        logger.debug("\tN_LD_CANDIDATES = {}".format(len(retained_loci)))
+
         for variant, pair_ld in zip(retained_loci, r2):
             if pair_ld > ld_threshold:
+                if debug:
+                    logger.debug(
+                        "\tCLUMPING {} (R2={})".format(variant, pair_ld)
+                    )
                 del summary[variant]
 
-        logger.debug("Chose {} variants, remaining {}.".format(
-            len(out), len(summary)
+        logger.debug("Chose {} variants (cur: {}), remaining {}.".format(
+            len(out), info.name, len(summary)
         ))
+
+        if target_n is not None and len(out) >= target_n:
+            logger.debug("Target number of variants reached.")
+            break
 
     return out
 
@@ -284,6 +293,13 @@ def parse_args():
         help="P-value threshold for inclusion in the GRS (default: 5e-8).",
         default=5e-8,
         type=float
+    )
+
+    parser.add_argument(
+        "--target-n",
+        help="Target number of variants to include in the GRS.",
+        default=None,
+        type=int
     )
 
     parser.add_argument(
@@ -312,6 +328,12 @@ def parse_args():
         type=int
     )
 
+    parser.add_argument(
+        "--keep-ambiguous-alleles",
+        help="Do not filter out ambiguous alleles (e.g. G/C or A/T)",
+        action="store_true"
+    )
+
     # Files
     parser.add_argument(
         "--summary",
@@ -334,17 +356,30 @@ def parse_args():
         default="selected.grs"
     )
 
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+    )
+
     return parser.parse_args()
 
 
 def main():
+    global debug
+
     args = parse_args()
+
+    if args.debug:
+        debug = True
+        logger.setLevel(logging.DEBUG)
 
     # Parameters
     p_threshold = args.p_threshold
+    target_n = args.target_n
     maf_threshold = args.maf_threshold
     ld_threshold = args.ld_threshold
     ld_window_size = args.ld_window_size
+    keep_ambiguous = args.keep_ambiguous_alleles
 
     summary_filename = args.summary
     reference_filename = args.reference
@@ -352,16 +387,23 @@ def main():
 
     # Read the summary statistics.
     logger.info("Reading summary statistics.")
-    summary, index = read_summary_statistics(summary_filename, p_threshold)
+    summary, index = read_summary_statistics(summary_filename, p_threshold,
+                                             keep_ambiguous=keep_ambiguous)
 
     logger.info("Extracting genotypes.")
     genotypes = extract_genotypes(reference_filename, summary, maf_threshold)
 
-    logger.info("Perform greedy selection.")
+    logger.info(
+        "Performing greedy selection with {} candidates."
+        "".format(len(summary))
+    )
     grs = greedy_pick_clump(summary, genotypes, index, ld_threshold,
-                            ld_window_size)
+                            ld_window_size, target_n)
 
-    logger.info("Writing the file containing the final selection.")
+    logger.info(
+        "Writing the file containing the selected {} variants."
+        "".format(len(grs))
+    )
     with open(output_filename, "w") as f:
         grs[0].write_header(f)
         for row in grs:

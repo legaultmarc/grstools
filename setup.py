@@ -20,6 +20,7 @@ def setup_package():
         url="https://github.com/legaultmarc/grstools",
         license="MIT",
         packages=find_packages(exclude=["tests", ]),
+        test_suite="grstools.tests.test_suite",
         entry_points={
             "console_scripts": [
                 "grs-evaluate=grstools.scripts.evaluate:main",
