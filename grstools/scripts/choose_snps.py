@@ -29,6 +29,42 @@ logger.setLevel(logging.DEBUG)
 logger.debug("Starting up")
 
 
+class Row(object):
+    __slots__ = ("name", "chrom", "pos", "reference", "risk", "p_value",
+                 "effect", "maf")
+
+    def __init__(self, name, chrom, pos, reference, risk, p_value, effect,
+                 maf=None):
+        """The row of a GRS file."""
+        self.name = name
+        self.chrom = chrom
+        self.pos = pos
+        self.reference = reference
+        self.risk = risk
+        self.p_value = p_value
+        self.effect = effect
+        self.maf = maf
+
+    def write_header(self, f):
+        f.write("name,chrom,pos,reference,risk,p-value,effect")
+        if self.maf is not None:
+            f.write(",maf")
+        f.write("\n")
+
+    @property
+    def _fields(self):
+        return [
+            self.name, self.chrom, self.pos, self.reference, self.risk,
+            self.p_value, self.effect
+        ]
+
+        if self.maf is not None:
+            self._fields.append(self.maf)
+
+    def write(self, f, sep=","):
+        f.write(sep.join([str(i) for i in self._fields]) + "\n")
+
+
 def region_query(index, variant, padding):
     index = index[variant.chrom]
     left = bisect.bisect(index, variant.pos - padding // 2)
@@ -57,11 +93,14 @@ def read_summary_statistics(filename, p_threshold, sep=","):
         variant = geneparse.Variant(name, info.chrom, info.pos,
                                     [info.reference, info.risk])
 
-        summary.append((
-            variant,
-            (info["p-value"], name, info.effect, info.reference, info.risk)
-        ))
+        row_args = [name, info.chrom, info.pos, info.reference, info.risk,
+                    info["p-value"], info.effect]
 
+        if "maf" in info.index:
+            row_args.append(info.maf)
+
+        row = Row(*row_args)
+        summary.append((variant, row))
         index[info.chrom].append(variant)
 
     # Sort the index.
@@ -69,7 +108,9 @@ def read_summary_statistics(filename, p_threshold, sep=","):
         index[chrom] = sorted(index[chrom], key=lambda x: x.pos)
 
     # Convert the summary statistics to an ordereddict of loci to stats.
-    summary = collections.OrderedDict(sorted(summary, key=lambda x: x[1][0]))
+    summary = collections.OrderedDict(
+        sorted(summary, key=lambda x: x[1].p_value)
+    )
 
     return summary, index
 
@@ -199,8 +240,7 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size):
             continue
 
         # Add it to the GRS.
-        p, name, effect, reference, risk = info
-        out.append((name, cur.chrom, cur.pos, reference, risk, effect))
+        out.append(info)
 
         # Get the genotypes for the current variant.
         cur_geno = genotypes[cur]
@@ -323,7 +363,6 @@ def main():
 
     logger.info("Writing the file containing the final selection.")
     with open(output_filename, "w") as f:
-        f.write("name,chrom,pos,reference,risk,effect\n")
-        for tu in grs:
-            f.write(",".join([str(i) for i in tu]))
-            f.write("\n")
+        grs[0].write_header(f)
+        for row in grs:
+            row.write(f)
