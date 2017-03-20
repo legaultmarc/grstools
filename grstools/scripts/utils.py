@@ -31,7 +31,8 @@ def histogram(args):
     plt.hist(data["grs"], bins=args.bins)
     plt.xlabel("GRS")
     logger.info("WRITING histogram to file '{}'.".format(out))
-    if args.out.endswith(".png"):
+
+    if out.endswith(".png"):
         plt.savefig(out, dpi=300)
     else:
         plt.savefig(out)

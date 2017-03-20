@@ -2,7 +2,6 @@
 Compute the GRS from genotypes and a GRS file.
 """
 
-import os
 import collections
 import logging
 import argparse
