@@ -102,14 +102,14 @@ def read_summary_statistics(filename, p_threshold, sep=",",
         if info["p-value"] > p_threshold:
             break
 
-        variant = geneparse.Variant(info.name, info.chrom, info.pos,
+        variant = geneparse.Variant(info["name"], info.chrom, info.pos,
                                     [info.reference, info.risk])
 
         if variant.alleles_ambiguous() and not keep_ambiguous:
             continue
 
-        row_args = [info.name, info.chrom, info.pos, info.reference, info.risk,
-                    info["p-value"], info.effect]
+        row_args = [info["name"], info.chrom, info.pos, info.reference,
+                    info.risk, info["p-value"], info.effect]
 
         if "maf" in info.index:
             row_args.append(info.maf)
@@ -400,10 +400,18 @@ def main():
     grs = greedy_pick_clump(summary, genotypes, index, ld_threshold,
                             ld_window_size, target_n)
 
+    if len(grs) == 0:
+        logger.warning(
+            "No variant satisfied the provided thresholds (could not generate "
+            "a GRS)."
+        )
+        return
+
     logger.info(
         "Writing the file containing the selected {} variants."
         "".format(len(grs))
     )
+
     with open(output_filename, "w") as f:
         grs[0].write_header(f)
         for row in grs:
