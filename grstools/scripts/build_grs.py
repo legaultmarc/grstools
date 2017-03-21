@@ -20,7 +20,8 @@ ScoreInfo = collections.namedtuple(
 )
 
 
-def compute_grs(samples, genotypes_and_info, quality_weight=True):
+def compute_grs(samples, genotypes_and_info, quality_weight=True,
+                ignore_ambiguous=True):
     quality_weight_warned = False
 
     grs = None
@@ -31,15 +32,26 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True):
         if g.coded == info.risk and g.reference == info.reference:
             # No need to flip.
             pass
+
         elif g.coded == info.reference and g.reference == info.coded:
             g.flip()
+
         else:
             raise RuntimeError(
                 "Invalid alleles should have been filtered out upstream."
             )
 
+        # Warn if alleles are ambiguous.
+        if ignore_ambiguous and g.variant.alleles_ambiguous():
+            logger.warning(
+                "AMBIGUOUS alleles for {} (ignoring)."
+                "".format(g.variant)
+            )
+            continue
+
         cur = g.genotypes * info.effect
 
+        # Weight by quality if available.
         if isinstance(g.variant, geneparse.ImputedVariant) and quality_weight:
             if not quality_weight_warned:
                 quality_weight_warned = True
@@ -114,7 +126,13 @@ def main():
                 "".format(v)
             )
 
-    computed_grs = compute_grs(reader.get_samples(), genotypes_and_info)
+    computed_grs = compute_grs(
+        reader.get_samples(),
+        genotypes_and_info,
+        quality_weight=not args.ignore_genotype_quality,
+        ignore_ambiguous=not args.keep_ambiguous,
+    )
+
     logger.info("WRITING file containing the GRS: '{}'".format(args.out))
     computed_grs.to_csv(args.out, header=True, index_label="sample")
 
@@ -158,6 +176,21 @@ def parse_args():
         "--out",
         help="Filename for the computed GRS (default: %(default)s).",
         default="computed_grs.csv"
+    )
+
+    parser.add_argument(
+        "--ignore-genotype-quality",
+        help=("For imputed variants, if this flag is set, the variants "
+              "will not be weighted with respect to their quality score. "
+              "By default, the weights are used if available."),
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--keep-ambiguous",
+        help=("Do not ignore ambiguous allele combinations (i.e. A/T and "
+              "G/C). By default, such alleles are ignored."),
+        action="store_true"
     )
 
     return parser.parse_args()

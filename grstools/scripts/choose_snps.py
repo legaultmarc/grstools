@@ -98,17 +98,17 @@ def read_summary_statistics(filename, p_threshold, sep=",",
 
     # For now, this is not a limiting step, but it might be nice to parallelize
     # this eventually.
-    for name, info in df.iterrows():
+    for idx, info in df.iterrows():
         if info["p-value"] > p_threshold:
             break
 
-        variant = geneparse.Variant(name, info.chrom, info.pos,
+        variant = geneparse.Variant(info.name, info.chrom, info.pos,
                                     [info.reference, info.risk])
 
         if variant.alleles_ambiguous() and not keep_ambiguous:
             continue
 
-        row_args = [name, info.chrom, info.pos, info.reference, info.risk,
+        row_args = [info.name, info.chrom, info.pos, info.reference, info.risk,
                     info["p-value"], info.effect]
 
         if "maf" in info.index:

@@ -21,7 +21,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     """Parse a GRS file.
 
     The mandatory columns are:
-        - name (variant name, needs to be unique and defined)
+        - name (variant name)
         - chrom (chromosome, a str))
         - pos (position, a int)
         - reference (reference allele)
@@ -38,13 +38,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     """
     df = pd.read_csv(filename, sep=sep, dtype=COL_TYPES)
 
-    try:
-        df.set_index("name", inplace=True, verify_integrity=True)
-    except ValueError:
-        raise ValueError("Variant names are not unique.")
-
     cols = list(COL_TYPES.keys())
-    cols.remove("name")
 
     # Optional columns.
     if "maf" in df.columns:
