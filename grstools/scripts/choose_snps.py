@@ -84,8 +84,32 @@ def region_query(index, variant, padding):
     return left, right
 
 
+def _parse_region(s):
+    message = "Expected format for region is: 'chr1:12345-22345'."
+    if not s.startswith("chr"):
+        raise ValueError(message)
+
+    s = s[3:]
+    try:
+        chrom, tail = s.split(":")
+        start, end = [int(i) for i in tail.split("-")]
+    except:
+        raise ValueError(message)
+
+    # Flip start and end position if needed.
+    if start > end:
+        start, end = end, start
+
+    return chrom, start, end
+
+
 def read_summary_statistics(filename, p_threshold, sep=",",
-                            keep_ambiguous=False):
+                            keep_ambiguous=False, region=None):
+    if region is not None:
+        region = _parse_region(region)
+        logger.info("Only variants in region chr{}:{}-{} will be considered."
+                    "".format(*region))
+
     # Variant to stats orderedict (but constructed as a list).
     summary = []
 
@@ -104,6 +128,14 @@ def read_summary_statistics(filename, p_threshold, sep=",",
 
         variant = geneparse.Variant(info["name"], info.chrom, info.pos,
                                     [info.reference, info.risk])
+
+        if region is not None:
+            in_region = (
+                variant.chrom == region[0] and
+                region[1] <= variant.pos <= region[2]
+            )
+            if not in_region:
+                continue
 
         if variant.alleles_ambiguous() and not keep_ambiguous:
             continue
@@ -329,6 +361,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--region",
+        help=("Only consider variants located within a genomic region. "
+              "The expected format is 'chrCHR:START-END'. For example: "
+              "'chr1:12345-22345'."),
+        default=None,
+        type=str
+    )
+
+    parser.add_argument(
         "--keep-ambiguous-alleles",
         help="Do not filter out ambiguous alleles (e.g. G/C or A/T)",
         action="store_true"
@@ -380,6 +421,7 @@ def main():
     ld_threshold = args.ld_threshold
     ld_window_size = args.ld_window_size
     keep_ambiguous = args.keep_ambiguous_alleles
+    region = args.region
 
     summary_filename = args.summary
     reference_filename = args.reference
@@ -388,7 +430,8 @@ def main():
     # Read the summary statistics.
     logger.info("Reading summary statistics.")
     summary, index = read_summary_statistics(summary_filename, p_threshold,
-                                             keep_ambiguous=keep_ambiguous)
+                                             keep_ambiguous=keep_ambiguous,
+                                             region=region)
 
     logger.info("Extracting genotypes.")
     genotypes = extract_genotypes(reference_filename, summary, maf_threshold)

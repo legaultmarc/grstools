@@ -12,6 +12,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 
+from ..utils import parse_computed_grs_file
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -20,13 +23,9 @@ plt.style.use("ggplot")
 matplotlib.rc("font", size="6")
 
 
-def _read_grs(filename):
-    return pd.read_csv(filename, sep=",", index_col="sample")
-
-
 def histogram(args):
     out = args.out if args.out else "grs_histogram.png"
-    data = _read_grs(args.grs_filename)
+    data = parse_computed_grs_file(args.grs_filename)
 
     plt.hist(data["grs"], bins=args.bins)
     plt.xlabel("GRS")
@@ -40,7 +39,7 @@ def histogram(args):
 
 def quantiles(args):
     out = args.out if args.out else "grs_discretized.csv"
-    data = _read_grs(args.grs_filename)
+    data = parse_computed_grs_file(args.grs_filename)
 
     q = float(args.k) / args.q
     low, high = data.quantile([q, 1-q]).values.T[0]
@@ -60,17 +59,17 @@ def quantiles(args):
 
 def standardize(args):
     out = args.out if args.out else "grs_standardized.csv"
-    data = _read_grs(args.grs_filename)
+    data = parse_computed_grs_file(args.grs_filename)
 
     data["grs"] = (data["grs"] - data["grs"].mean()) / data["grs"].std()
     data.to_csv(out)
 
 
 def correlation(args):
-    grs1 = _read_grs(args.grs_filename)
+    grs1 = parse_computed_grs_file(args.grs_filename)
     grs1.columns = ["grs1"]
 
-    grs2 = _read_grs(args.grs_filename2)
+    grs2 = parse_computed_grs_file(args.grs_filename2)
     grs2.columns = ["grs2"]
 
     grs = pd.merge(grs1, grs2, left_index=True, right_index=True, how="inner")
