@@ -1,0 +1,47 @@
+"""
+Compute the GRS from genotypes and a GRS file.
+"""
+
+import logging
+import argparse
+
+import numpy as np
+import pandas as pd
+import geneparse
+
+from .evaluate import _add_phenotype_arguments
+from ..utils import mr_effect_estimate, _create_genetest_phenotypes
+
+
+logger = logging.getLogger(__name__)
+
+
+def main():
+    args = parse_args()
+
+    phenotypes = _create_genetest_phenotypes(
+        args.grs_filename, args.phenotypes_filename,
+        args.phenotypes_sample_column, args.phenotypes_separator
+    )
+
+    beta, se = mr_effect_estimate(
+        phenotypes, args.outcome, args.exposure
+    )
+    print("{} ({})".format(beta, se))
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Estimate the effect of an exposure on an outcome using "
+            "a GRS with an effect on the exposure.\n"
+            "Estimates are done using the ratio method."
+        )
+    )
+
+    parser.add_argument("--grs-filename", type=str)
+    parser.add_argument("--exposure", type=str)
+    parser.add_argument("--outcome", type=str)
+    _add_phenotype_arguments(parser)
+
+    return parser.parse_args()

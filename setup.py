@@ -27,6 +27,7 @@ def setup_package():
                 "grs-compute=grstools.scripts.build_grs:main",
                 "grs-utils=grstools.scripts.utils:main",
                 "grs-create=grstools.scripts.choose_snps:main",
+                "grs-mr=grstools.scripts.mendelian_randomization:main",
             ],
         },
         classifiers=["Development Status :: 4 - Beta",

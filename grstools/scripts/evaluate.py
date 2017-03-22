@@ -15,7 +15,7 @@ from matplotlib.patches import Rectangle
 from genetest.statistics import model_map
 
 from ..utils import regress as _regress
-from ..utils import parse_computed_grs_file
+from ..utils import parse_computed_grs_file, _create_genetest_phenotypes
 
 
 plt.style.use("ggplot")
@@ -32,11 +32,18 @@ def _parse_phenotypes(args):
     )
 
 
+def _parse_and_regress(args, formula):
+    phenotypes = _create_genetest_phenotypes(
+        args.grs_filename, args.phenotypes_filename,
+        args.phenotypes_sample_column, args.phenotypes_separator
+    )
+    return _regress(formula, args.test, phenotypes)
+
 
 def regress(args):
     # Do the regression.
     formula = "{} ~ grs".format(args.phenotype)
-    stats = _regress(
+    stats = _parse_and_regress(
         formula, args.test, args.grs_filename, args.phenotypes_filename,
         args.phenotypes_sample_column, args.phenotypes_separator
     )
@@ -173,16 +180,22 @@ def dichotomize_plot(args):
 
     fig, ax1 = plt.subplots()
 
-    ax1.plot(qs, betas)
-    ax1.plot(qs, upper_ci, "--", color="gray", linewidth=0.2)
+    beta_line, = ax1.plot(qs, betas)
+    ci_line, = ax1.plot(qs, upper_ci, "--", color="gray", linewidth=0.2)
     ax1.plot(qs, lower_ci, "--", color="gray", linewidth=0.2)
     ax1.set_ylabel(r"$\beta$")
     ax1.set_xlabel("Quantile used to form groups (0.5 is median)")
 
     ax2 = ax1.twinx()
     ax2.grid(False, which="both")
-    ax2.plot(qs, ns, "-", linewidth=0.2, label="n")
-    ax2.set_ylabel("$effective n$")
+    n_line, = ax2.plot(qs, ns, "-", linewidth=0.2)
+    ax2.set_ylabel("effective n")
+
+    plt.legend(
+        (beta_line, ci_line, n_line),
+        (r"$\beta$", "95% CI", "$n$"),
+        loc="upper center"
+    )
 
     plt.show()
 

@@ -5,6 +5,7 @@ Utilities to manage files.
 import logging
 
 import pandas as pd
+import numpy as np
 
 from genetest.subscribers import ResultsMemory
 from genetest.analysis import execute_formula
@@ -75,14 +76,43 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     return df
 
 
-def mr_effect_estimate():
-    # TODO
-    pass
+def mr_effect_estimate(phenotypes, outcome, exposure):
+    """Estimate the effect of the exposure on the outcome using the ratio
+    method.
+    """
+    logger.warning("For now, continuous outcomes and exposures are assumed.")
+
+    def _estimate_beta(phen):
+        # Regress big_gamma = Y ~ G
+        stats = regress("{} ~ grs".format(outcome), "linear", phen)
+        big_gamma = stats["beta"]
+
+        # Regress small_gamma = X ~ G
+        stats = regress("{} ~ grs".format(exposure), "linear", phen)
+        small_gamma = stats["beta"]
+
+        # Ratio estimate is beta = big_gamma / small_gamma
+        return big_gamma / small_gamma
+
+    # Bootstrap standard error estimates.
+    df = phenotypes._phenotypes
+
+    beta = _estimate_beta(phenotypes)
+
+    betas = []
+    n = phenotypes.get_nb_samples()
+    for i in range(1000):
+        idx = np.random.choice(n, size=n, replace=True)
+        phenotypes._phenotypes = df.iloc[idx, :]
+        betas.append(_estimate_beta(phenotypes))
+
+    # FIXME Should I return the mean beta estimate from the bootstrap?
+    return beta, np.std(betas)
 
 
-def regress(model, test, grs_filename, phenotypes_filename,
-            phenotypes_sample_column="sample", phenotypes_separator=","):
-    """Regress a GRS on a phenotype."""
+def _create_genetest_phenotypes(grs_filename, phenotypes_filename,
+                                phenotypes_sample_column="sample",
+                                phenotypes_separator=","):
     # Read the GRS.
     grs = TextPhenotypes(grs_filename, "sample", ",", "", False)
 
@@ -94,7 +124,11 @@ def regress(model, test, grs_filename, phenotypes_filename,
     )
 
     phenotypes.merge(grs)
+    return phenotypes
 
+
+def regress(model, test, phenotypes):
+    """Regress a GRS on a phenotype."""
     subscriber = ResultsMemory()
 
     # Check that the GRS was included in the formula.
