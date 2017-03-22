@@ -12,12 +12,25 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
+from genetest.statistics import model_map
+
 from ..utils import regress as _regress
 from ..utils import parse_computed_grs_file
 
 
 plt.style.use("ggplot")
 matplotlib.rc("font", size="5")
+
+
+def _parse_phenotypes(args):
+    """Parse a phenotypes file given the arguments added by
+    _add_phenotype_arguments.
+    """
+    return pd.read_csv(
+        args.phenotypes_filename, index_col=args.phenotypes_sample_column,
+        sep=args.phenotypes_separator
+    )
+
 
 
 def regress(args):
@@ -34,11 +47,7 @@ def regress(args):
 
     # Read the files.
     grs = parse_computed_grs_file(args.grs_filename)
-    phenotypes = pd.read_csv(
-        args.phenotypes_filename, index_col=args.phenotypes_sample_column,
-        sep=args.phenotypes_separator
-    )
-
+    phenotypes = _parse_phenotypes(args)
     df = phenotypes.join(grs)
 
     df = df[[args.phenotype, "grs"]]
@@ -46,14 +55,14 @@ def regress(args):
 
     # Create the plot.
     if args.test == "linear":
-        return _linear_regress_plot(df, stats)
+        return _linear_regress_plot(df, stats, args.out)
     if args.test == "logistic":
-        return _logistic_regress_plot(df, stats)
+        return _logistic_regress_plot(df, stats, args.out)
     else:
         raise ValueError()
 
 
-def _linear_regress_plot(df, stats):
+def _linear_regress_plot(df, stats, out):
     data_marker, = plt.plot(df["grs"], df["y"], "o", markersize=0.5)
 
     xmin = df["grs"].min()
@@ -88,10 +97,13 @@ def _linear_regress_plot(df, stats):
         )
     )
 
-    plt.show()
+    if out is None:
+        plt.show()
+    else:
+        plt.savefig(out)
 
 
-def _logistic_regress_plot(df, stats):
+def _logistic_regress_plot(df, stats, out):
     levels = df["y"].unique()
     boxplot_data = []
     for i, level in enumerate(levels):
@@ -117,6 +129,61 @@ def _logistic_regress_plot(df, stats):
 
     plt.legend()
 
+    if out is None:
+        plt.show()
+    else:
+        plt.savefig(out)
+
+
+def dichotomize_plot(args):
+    """Compares differente quantiles of dichotomization."""
+    # Read the files.
+    grs = parse_computed_grs_file(args.grs_filename)
+    phenotypes = _parse_phenotypes(args)
+    df = phenotypes.join(grs)
+    df["group"] = np.nan
+
+    # Init the statistical test.
+    test = model_map[args.test]()
+
+    qs = []
+    upper_ci = []
+    lower_ci = []
+    ns = []
+    betas = []
+
+    for q in np.linspace(0.05, 0.5, 200):
+        low, high = df[["grs"]].quantile([q, 1 - q]).values.T[0]
+
+        df["group"] = np.nan
+        df.loc[df["grs"] <= low, "group"] = 0
+        df.loc[df["grs"] >= high, "group"] = 1
+
+        cur = df.dropna()
+
+        stats = test.fit(
+            cur[[args.phenotype]], cur[["group"]]
+        )
+
+        qs.append(q)
+        betas.append(stats["group"]["coef"])
+        ns.append(df.dropna().shape[0])
+        upper_ci.append(stats["group"]["upper_ci"])
+        lower_ci.append(stats["group"]["lower_ci"])
+
+    fig, ax1 = plt.subplots()
+
+    ax1.plot(qs, betas)
+    ax1.plot(qs, upper_ci, "--", color="gray", linewidth=0.2)
+    ax1.plot(qs, lower_ci, "--", color="gray", linewidth=0.2)
+    ax1.set_ylabel(r"$\beta$")
+    ax1.set_xlabel("Quantile used to form groups (0.5 is median)")
+
+    ax2 = ax1.twinx()
+    ax2.grid(False, which="both")
+    ax2.plot(qs, ns, "-", linewidth=0.2, label="n")
+    ax2.set_ylabel("$effective n$")
+
     plt.show()
 
 
@@ -125,9 +192,19 @@ def main():
 
     command_handlers = {
         "regress": regress,
+        "dichotomize-plot": dichotomize_plot,
     }
 
     command_handlers[args.command](args)
+
+
+def _add_phenotype_arguments(parser):
+    parser.add_argument("--phenotypes-filename", type=str)
+    parser.add_argument("--phenotypes-sample-column", type=str,
+                        default="sample")
+    parser.add_argument("--phenotypes-separator", type=str,
+                        default=",")
+    parser.add_argument("--phenotype", type=str)
 
 
 def parse_args():
@@ -143,10 +220,7 @@ def parse_args():
         help="Path to the file containing the computed GRS."
     )
 
-    parent.add_argument(
-        "--out", "-o",
-        default=None
-    )
+    parent.add_argument("--out", "-o", default=None, type=str)
 
     subparser = parser.add_subparsers(
         dest="command",
@@ -155,19 +229,28 @@ def parse_args():
     subparser.required = True
 
     # Regress
+    # TODO
+    # To evaluate the performance of discretized GRS, it might be interesting
+    # to generate simular plots of y ~ GRS. Then it could be qregress for
+    # continuous GRS and dregress for discretized GRS.
     regress_parse = subparser.add_parser(
         "regress",
-        help="Regress the GRS on an outcome.",
+        help="Regress the GRS on a discrete or continuous outcome.",
         parents=[parent]
     )
 
-    regress_parse.add_argument("--phenotypes-filename", type=str)
-    regress_parse.add_argument("--phenotypes-sample-column", type=str,
-                               default="sample")
-    regress_parse.add_argument("--phenotypes-separator", type=str,
-                               default=",")
-    regress_parse.add_argument("--phenotype", type=str)
+    _add_phenotype_arguments(regress_parse)
     regress_parse.add_argument("--test", type=str)
     regress_parse.add_argument("--no-plot", action="store_true")
+
+    # Dichotomize plot.
+    dichotomize_parse = subparser.add_parser(
+        "dichotomize-plot",
+        help="A plot to help identify ideal dichotmizatin parameters.",
+        parents=[parent]
+    )
+
+    _add_phenotype_arguments(dichotomize_parse)
+    dichotomize_parse.add_argument("--test", type=str)
 
     return parser.parse_args()
