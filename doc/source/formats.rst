@@ -34,19 +34,3 @@ Optional columns are also useful in some cases:
 - ``maf`` The minor allele frequency can be used in the selection of variants
   or to optimize LD computations by removing rare variants. It can also be used
   to distinguish ambiguous allele combinations (i.e. A/T or G/C).
-
-Mappers
-^^^^^^^^
-
-The goal of mappers is to define a name-to-name correspondence between two
-files. In `grstools` terminology, it is used to map the names of a `source`
-file, typically a ``.grs`` file which is to be evaluated on a given `target`
-dataset.
-
-Using the `grs-match-snps` tool, it is possible to generate such a mapping.
-This tool will try to match variants by name, and then by chromosome, position
-and alleles. The output of the tool is in the format expected by the other
-utilities that require a 'mapper' file. In fact, the output file contains only
-three columns: ``source_name``, ``target_name`` and ``method``. The method
-contains a string identifying how the correspondence between the source and
-target name has been established.

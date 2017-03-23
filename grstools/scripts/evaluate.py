@@ -19,7 +19,7 @@ from ..utils import parse_computed_grs_file, _create_genetest_phenotypes
 
 
 plt.style.use("ggplot")
-matplotlib.rc("font", size="5")
+matplotlib.rc("font", size="7")
 
 
 def _parse_phenotypes(args):
@@ -43,10 +43,7 @@ def _parse_and_regress(args, formula):
 def regress(args):
     # Do the regression.
     formula = "{} ~ grs".format(args.phenotype)
-    stats = _parse_and_regress(
-        formula, args.test, args.grs_filename, args.phenotypes_filename,
-        args.phenotypes_sample_column, args.phenotypes_separator
-    )
+    stats = _parse_and_regress(args, formula)
 
     if args.no_plot:
         print(json.dumps(stats))
@@ -111,6 +108,8 @@ def _linear_regress_plot(df, stats, out):
 
 
 def _logistic_regress_plot(df, stats, out):
+    # TODO
+    # Add the odd ratio or else the stats are for nothing.
     levels = df["y"].unique()
     boxplot_data = []
     for i, level in enumerate(levels):
