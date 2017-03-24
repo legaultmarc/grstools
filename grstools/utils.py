@@ -76,7 +76,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     return df
 
 
-def mr_effect_estimate(phenotypes, outcome, exposure):
+def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000):
     """Estimate the effect of the exposure on the outcome using the ratio
     method.
     """
@@ -94,20 +94,25 @@ def mr_effect_estimate(phenotypes, outcome, exposure):
         # Ratio estimate is beta = big_gamma / small_gamma
         return big_gamma / small_gamma
 
-    # Bootstrap standard error estimates.
+    # Run the bootstrap.
     df = phenotypes._phenotypes
-
     beta = _estimate_beta(phenotypes)
 
-    betas = []
+    betas = np.empty(n_iter, dtype=float)
     n = phenotypes.get_nb_samples()
-    for i in range(1000):
+    for i in range(n_iter):
         idx = np.random.choice(n, size=n, replace=True)
         phenotypes._phenotypes = df.iloc[idx, :]
-        betas.append(_estimate_beta(phenotypes))
+        betas[i] = _estimate_beta(phenotypes)
 
-    # FIXME Should I return the mean beta estimate from the bootstrap?
-    return beta, np.std(betas)
+    # Compute the error: deltastar = betas - beta
+    deltastar = betas - beta
+
+    # Find the critical values
+    # 95% CI -> 2.5% and 97.5%
+    low, high = beta - np.percentile(deltastar, [0.025, 0.975])
+
+    return beta, low, high
 
 
 def _create_genetest_phenotypes(grs_filename, phenotypes_filename,

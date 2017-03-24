@@ -24,10 +24,16 @@ def main():
         args.phenotypes_sample_column, args.phenotypes_separator
     )
 
-    beta, se = mr_effect_estimate(
-        phenotypes, args.outcome, args.exposure
+    n_iter = 1000
+    beta, low, high = mr_effect_estimate(
+        phenotypes, args.outcome, args.exposure, n_iter=n_iter
     )
-    print("{} ({})".format(beta, se))
+
+    print("We ran {} bootstrap iterations to estimate the Beta coefficient."
+          "".format(n_iter))
+    print("The estimated value and 95% CI (computed using the empirical "
+          "bootstrap) are:\n")
+    print("{:.4g} ({:.4g}, {:.4g})".format(beta, low, high))
 
 
 def parse_args():

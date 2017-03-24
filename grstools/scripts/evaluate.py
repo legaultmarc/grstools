@@ -66,6 +66,12 @@ def regress(args):
         raise ValueError()
 
 
+def _get_dummy_artist():
+    return Rectangle(
+        (0, 0), 1, 1, fc="w", fill=False, edgecolor="none", linewidth=0
+    )
+
+
 def _linear_regress_plot(df, stats, out):
     data_marker, = plt.plot(df["grs"], df["y"], "o", markersize=0.5)
 
@@ -85,12 +91,8 @@ def _linear_regress_plot(df, stats, out):
     plt.ylabel("Phenotype")
 
     # Add extra info to the legend.
-    rect = Rectangle(
-        (0, 0), 1, 1, fc="w", fill=False, edgecolor="none", linewidth=0
-    )
-
     plt.legend(
-        (rect, data_marker, line_marker),
+        (_get_dummy_artist(), data_marker, line_marker),
         (
             r"$\beta={:.3g}\ ({:.3g}, {:.3g}),\ (p={:.4g},\ R^2={:.3g})$"
             "".format(stats["beta"], stats["CI"][0], stats["CI"][1],
@@ -108,8 +110,16 @@ def _linear_regress_plot(df, stats, out):
 
 
 def _logistic_regress_plot(df, stats, out):
-    # TODO
+    odds_ratio = np.exp(stats["beta"])
+    odds_ratio_ci = [np.exp(i) for i in stats["CI"]]
+
     # Add the odd ratio or else the stats are for nothing.
+    artists = [_get_dummy_artist()]
+    labels = [
+        "OR={:.3f} ({:.3f}, {:.3f}) (p={:.3g})"
+        "".format(odds_ratio, odds_ratio_ci[0], odds_ratio_ci[1],
+                  stats["p-value"])
+    ]
     levels = df["y"].unique()
     boxplot_data = []
     for i, level in enumerate(levels):
@@ -117,13 +127,16 @@ def _logistic_regress_plot(df, stats, out):
         boxplot_data.append(data)
 
         noise = (np.random.random(data.shape[0]) - 0.5) / 4
-        plt.plot(
+        lines, = plt.plot(
             np.full_like(data, i + 1) + noise,
             data,
             "o",
             markersize=0.5,
-            label="GRS mean = {:.4f} ($\sigma={:.4f}$)".format(data.mean(),
-                                                               data.std())
+        )
+        artists.append(lines)
+        labels.append(
+            "GRS mean = {:.4f} ($\sigma={:.4f}$)"
+            "".format(data.mean(), data.std())
         )
 
     plt.boxplot(boxplot_data, showfliers=False, medianprops={"color": "black"})
@@ -133,7 +146,7 @@ def _logistic_regress_plot(df, stats, out):
 
     plt.ylabel("GRS")
 
-    plt.legend()
+    plt.legend(artists, labels)
 
     if out is None:
         plt.show()
@@ -196,7 +209,10 @@ def dichotomize_plot(args):
         loc="upper center"
     )
 
-    plt.show()
+    if args.out:
+        plt.savefig(args.out)
+    else:
+        plt.show()
 
 
 def main():

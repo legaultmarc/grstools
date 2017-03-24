@@ -81,7 +81,7 @@ risk score (G)) is used to estimate the effect of an exposure (X) on an outcome
 (Y). Here, the estimation is done using the ratio method:
 
 .. math::
-    \beta = \frac{\beta_{Y \sim G}}{\beta_{Y \sim X}}
+    \beta = \frac{\beta_{Y \sim G}}{\beta_{X \sim G}}
 
 In the current implementation, bootstrap resampling is used to estimate the
 standard error which can be used for further inference.
@@ -198,26 +198,33 @@ follows:
 .. image:: _static/images/evaluate-regress-binary.png
 
 In this plot, the perspective is somewhat reversed, when compared with the
-linear case. The GRS is now in the y axis and it's distribution is shown in
+linear case. The GRS is now in the y axis and its distribution is shown in
 cases and controls. The more general term "level" is used to describe the
 discrete numerical values of the phenotype as it could be used for factor
 variables.
 
-.. todo::
-    Logistic regression, fix doc and plot.
+The results for the logistic regression are shown on the plot. The OR
+corresponds to the expected increase in odds for a one unit increase in the
+GRS.
 
 dichotomize-plot
 +++++++++++++++++
 
 This plot can be used to select an optimal quantile for dichotmization. The
 tradeoff between the number of individuals classified and the GRS effect size
-is highlighted.
+is highlighted. Note that selecting a local maxima in this plot can be a bad
+idea because it increases the risk of overfitting. Traditional approaches such
+as using a test set, using cross-validation or bootstrapping can be used to
+select a more robust threshold.
+
+The dichotmization is done by comparing the extremums of the distribution. For
+example, at the 0.25 quantile, the first quartile (1/4) is compared to the last
+quartile (4/4). All of the individuals in between can be used to form an
+"intermediate" group or can be excluded from downstream analyses. This is why
+the right axis represents the number of individuals that are classified in
+either the "high" or "low" group for a given dichotmization.
 
 .. image:: _static/images/evaluate-dichotomize-plot.png
-
-.. todo::
-    The ``--out`` is not handled for this plot. Also describe how the
-    dichotmization is done (i.e. 1/4 vs 4/4 and not 1/4 vs else).
 
 .. literalinclude:: includes/grs_evaluate_help.txt
     :language: none

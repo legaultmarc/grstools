@@ -104,11 +104,17 @@ def _parse_region(s):
 
 
 def read_summary_statistics(filename, p_threshold, sep=",",
-                            keep_ambiguous=False, region=None):
+                            keep_ambiguous=False, region=None,
+                            exclude_region=None):
     if region is not None:
         region = _parse_region(region)
         logger.info("Only variants in region chr{}:{}-{} will be considered."
                     "".format(*region))
+
+    if exclude_region is not None:
+        exclude_region = _parse_region(exclude_region)
+        logger.info("Only variants outside of region chr{}:{}-{} will be "
+                    "considered.".format(*exclude_region))
 
     # Variant to stats orderedict (but constructed as a list).
     summary = []
@@ -120,6 +126,13 @@ def read_summary_statistics(filename, p_threshold, sep=",",
     df = parse_grs_file(filename, p_threshold=p_threshold, sep=sep)
     df.sort_values("p-value", inplace=True)
 
+    # Method to see if a variant is in a region.
+    def _in_region(variant, chrom, start, end):
+        return (
+            variant.chrom == chrom and
+            start <= variant.pos <= end
+        )
+
     # For now, this is not a limiting step, but it might be nice to parallelize
     # this eventually.
     for idx, info in df.iterrows():
@@ -129,13 +142,15 @@ def read_summary_statistics(filename, p_threshold, sep=",",
         variant = geneparse.Variant(info["name"], info.chrom, info.pos,
                                     [info.reference, info.risk])
 
+        # Region based inclusion/exclusion
         if region is not None:
-            in_region = (
-                variant.chrom == region[0] and
-                region[1] <= variant.pos <= region[2]
-            )
-            if not in_region:
+            if not _in_region(variant, *region):
                 continue
+
+        if exclude_region is not None:
+            if _in_region(variant, *exclude_region):
+                continue
+            
 
         if variant.alleles_ambiguous() and not keep_ambiguous:
             continue
@@ -370,6 +385,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--exclude-region",
+        help=("Only consider variants located OUTSIDE a genomic region. "
+              "The expected format is 'chrCHR:START-END'. For example: "
+              "'chr1:12345-22345'."),
+        default=None,
+        type=str
+    )
+
+    parser.add_argument(
         "--keep-ambiguous-alleles",
         help="Do not filter out ambiguous alleles (e.g. G/C or A/T)",
         action="store_true"
@@ -422,6 +446,7 @@ def main():
     ld_window_size = args.ld_window_size
     keep_ambiguous = args.keep_ambiguous_alleles
     region = args.region
+    exclude_region = args.exclude_region
 
     summary_filename = args.summary
     reference_filename = args.reference
@@ -431,7 +456,8 @@ def main():
     logger.info("Reading summary statistics.")
     summary, index = read_summary_statistics(summary_filename, p_threshold,
                                              keep_ambiguous=keep_ambiguous,
-                                             region=region)
+                                             region=region,
+                                             exclude_region=exclude_region)
 
     logger.info("Extracting genotypes.")
     genotypes = extract_genotypes(reference_filename, summary, maf_threshold)
