@@ -3,6 +3,7 @@ Evaluate the performance of constructed GRS or of the variant selection
 procedure.
 """
 
+import os
 import argparse
 import json
 
@@ -215,12 +216,67 @@ def dichotomize_plot(args):
         plt.show()
 
 
+def roc_curve(args):
+    from sklearn.metrics import roc_curve, auc
+
+    grs = None
+    grs_filenames = [args.grs_filename] + args.other_grs
+
+    for filename in grs_filenames:
+        name = os.path.basename(filename)
+
+        if grs is None:
+            grs = parse_computed_grs_file(filename)
+            grs.columns = [name]
+
+        else:
+            _cur = parse_computed_grs_file(filename)
+            _cur.columns = [name]
+            grs = pd.merge(grs, _cur, left_index=True, right_index=True)
+
+    grs_names = grs.columns
+
+    phenotypes = _parse_phenotypes(args)
+    df = phenotypes.join(grs)
+
+    artists = []
+    labels = []
+
+    plt.figure(figsize=(5, 5))
+    for name in grs_names:
+        fpr, tpr, _ = roc_curve(df[args.phenotype], df[name])
+        _auc = auc(fpr, tpr)
+        artist, = plt.plot(
+            fpr, tpr, linewidth=0.4,
+        )
+
+        artists.append(artist)
+        if len(grs_names) > 1:
+            labels.append("{}; AUC={:.3f}".format(name, _auc))
+        else:
+            labels.append("AUC={:.3f}".format(_auc))
+
+    plt.legend(artists, labels)
+    plt.plot([0, 1], [0, 1], "--", color="gray", linewidth=0.2)
+
+    plt.xlim([0, 1])
+    plt.ylim([0, 1])
+    plt.xlabel("False positive rate")
+    plt.ylabel("True positive rate")
+
+    if args.out:
+        plt.savefig(args.out)
+    else:
+        plt.show()
+
+
 def main():
     args = parse_args()
 
     command_handlers = {
         "regress": regress,
         "dichotomize-plot": dichotomize_plot,
+        "roc": roc_curve,
     }
 
     command_handlers[args.command](args)
@@ -280,5 +336,20 @@ def parse_args():
 
     _add_phenotype_arguments(dichotomize_parse)
     dichotomize_parse.add_argument("--test", type=str)
+
+    # ROC and roll curves.
+    roc_parse = subparser.add_parser(
+        "roc",
+        help="Draw a ROC curve for a GRS (given a binary phenotype).",
+        parents=[parent]
+    )
+
+    roc_parse.add_argument(
+        "other_grs",
+        help="Other GRS to include in the ROC plot.",
+        nargs="*"
+    )
+
+    _add_phenotype_arguments(roc_parse)
 
     return parser.parse_args()

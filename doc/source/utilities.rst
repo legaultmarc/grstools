@@ -226,5 +226,14 @@ either the "high" or "low" group for a given dichotmization.
 
 .. image:: _static/images/evaluate-dichotomize-plot.png
 
+
+ROC
+++++
+
+To evaluate the predictive accuracy of a GRS, it can be useful to look at its
+ROC curve.
+
+.. image:: _static/images/evaluate-roc.png
+
 .. literalinclude:: includes/grs_evaluate_help.txt
     :language: none

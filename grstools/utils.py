@@ -76,24 +76,25 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     return df
 
 
-def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000):
+def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
+                       y_g_test="linear", x_g_test="linear"):
     """Estimate the effect of the exposure on the outcome using the ratio
     method.
     """
-    logger.warning("For now, continuous outcomes and exposures are assumed.")
-
     def _estimate_beta(phen):
         # Regress big_gamma = Y ~ G
-        stats = regress("{} ~ grs".format(outcome), "linear", phen)
+        stats = regress("{} ~ grs".format(outcome), y_g_test, phen)
         big_gamma = stats["beta"]
 
         # Regress small_gamma = X ~ G
-        stats = regress("{} ~ grs".format(exposure), "linear", phen)
+        stats = regress("{} ~ grs".format(exposure), x_g_test, phen)
         small_gamma = stats["beta"]
 
         # Ratio estimate is beta = big_gamma / small_gamma
         return big_gamma / small_gamma
 
+    # Description of the empirical bootstrap can be found here:
+    # https://ocw.mit.edu/courses/mathematics/18-05-introduction-to-probability-and-statistics-spring-2014/readings/MIT18_05S14_Reading24.pdf
     # Run the bootstrap.
     df = phenotypes._phenotypes
     beta = _estimate_beta(phenotypes)
@@ -110,7 +111,7 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000):
 
     # Find the critical values
     # 95% CI -> 2.5% and 97.5%
-    low, high = beta - np.percentile(deltastar, [2.5, 97.5])
+    high, low = beta - np.percentile(deltastar, [2.5, 97.5])
 
     return beta, low, high
 
