@@ -104,7 +104,11 @@ def correlation(args):
 
     plt.legend()
     plt.tight_layout()
-    plt.show()
+
+    if args.out:
+        plt.savefig(args.out)
+    else:
+        plt.show()
 
 
 def main():

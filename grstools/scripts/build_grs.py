@@ -33,7 +33,7 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
             # No need to flip.
             pass
 
-        elif g.coded == info.reference and g.reference == info.coded:
+        elif g.coded == info.reference and g.reference == info.risk:
             g.flip()
 
         else:

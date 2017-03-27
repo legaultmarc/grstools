@@ -110,7 +110,7 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000):
 
     # Find the critical values
     # 95% CI -> 2.5% and 97.5%
-    low, high = beta - np.percentile(deltastar, [0.025, 0.975])
+    low, high = beta - np.percentile(deltastar, [2.5, 97.5])
 
     return beta, low, high
 
