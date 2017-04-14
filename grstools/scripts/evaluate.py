@@ -162,6 +162,7 @@ def dichotomize_plot(args):
     phenotypes = _parse_phenotypes(args)
     df = phenotypes.join(grs)
     df["group"] = np.nan
+    df["intercept"] = 1
 
     # Init the statistical test.
     test = model_map[args.test]()
@@ -182,7 +183,7 @@ def dichotomize_plot(args):
         cur = df.dropna()
 
         stats = test.fit(
-            cur[[args.phenotype]], cur[["group"]]
+            cur[[args.phenotype]], cur[["group", "intercept"]]
         )
 
         qs.append(q)
