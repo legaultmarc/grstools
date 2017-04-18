@@ -2,10 +2,14 @@
 Utilities to manage files.
 """
 
+import urllib
+import json
 import logging
 
 import pandas as pd
 import numpy as np
+
+from geneparse import Variant
 
 from genetest.subscribers import ResultsMemory
 from genetest.analysis import execute_formula
@@ -93,9 +97,7 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
         # Ratio estimate is beta = big_gamma / small_gamma
         return big_gamma / small_gamma
 
-    # Description of the empirical bootstrap can be found here:
-    # https://ocw.mit.edu/courses/mathematics/18-05-introduction-to-probability-and-statistics-spring-2014/readings/MIT18_05S14_Reading24.pdf
-    # Run the bootstrap.
+    # Using the percentile method to compute a confidence interval.
     df = phenotypes._phenotypes
     beta = _estimate_beta(phenotypes)
 
@@ -106,14 +108,21 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
         phenotypes._phenotypes = df.iloc[idx, :]
         betas[i] = _estimate_beta(phenotypes)
 
-    # Compute the error: deltastar = betas - beta
-    deltastar = betas - beta
-
     # Find the critical values
     # 95% CI -> 2.5% and 97.5%
-    high, low = beta - np.percentile(deltastar, [2.5, 97.5])
+    low, high = np.percentile(betas, [2.5, 97.5])
 
-    return beta, low, high
+    # p-value
+    # This method to calculate the p-value is derived from:
+    # An Introduction to the Bootstrap. 1993. doi:10.1007/978-1-4899-4541-9
+    # Efron B., Tibshirani RJ.
+    #
+    # Section 15.4: Relationship of hypothesis tests to confidence intervals
+    # and the bootstrap.
+    # TODO verify...
+    p = np.sum(betas < 0) / n_iter
+
+    return beta, low, high, None
 
 
 def _create_genetest_phenotypes(grs_filename, phenotypes_filename,
@@ -174,5 +183,51 @@ def regress(model, test, phenotypes):
     if test == "linear":
         out["intercept"] = results["intercept"]["coef"]
         out["R2"] = results["MODEL"]["r_squared_adj"]
+
+    return out
+
+
+def rsids_to_variants(li):
+    url = "http://grch37.rest.ensembl.org/variation/homo_sapiens"
+
+    req = urllib.request.Request(
+        url=url,
+        data=json.dumps({"ids": li}).encode("utf-8"),
+        headers={
+            "Content-type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req) as f:
+        data = json.loads(f.read().decode("utf-8"))
+
+    out = {}
+    for name, info in data.items():
+        # Check the mappings.
+        found = False
+        for mapping in info["mappings"]:
+            chrom = mapping.get("seq_region_name")
+            pos = mapping.get("start")
+            alleles = mapping.get("allele_string").split("/")
+
+            assembly = mapping.get("assembly_name")
+
+            valid = (assembly == "GRCh37" and
+                     chrom is not None and
+                     pos is not None and
+                     len(alleles) >= 2)
+
+            if found and valid:
+                logger.warning("Multiple mappings for '{}'.".format(name))
+            elif valid:
+                found = True
+                out[name] = Variant(name, chrom, pos, alleles)
+
+        if not found:
+            logger.warning(
+                "Could not find mappings for '{}'.".format(name)
+            )
 
     return out
