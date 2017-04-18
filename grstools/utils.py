@@ -2,8 +2,6 @@
 Utilities to manage files.
 """
 
-import urllib
-import json
 import logging
 
 import pandas as pd
@@ -183,51 +181,5 @@ def regress(model, test, phenotypes):
     if test == "linear":
         out["intercept"] = results["intercept"]["coef"]
         out["R2"] = results["MODEL"]["r_squared_adj"]
-
-    return out
-
-
-def rsids_to_variants(li):
-    url = "http://grch37.rest.ensembl.org/variation/homo_sapiens"
-
-    req = urllib.request.Request(
-        url=url,
-        data=json.dumps({"ids": li}).encode("utf-8"),
-        headers={
-            "Content-type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST"
-    )
-
-    with urllib.request.urlopen(req) as f:
-        data = json.loads(f.read().decode("utf-8"))
-
-    out = {}
-    for name, info in data.items():
-        # Check the mappings.
-        found = False
-        for mapping in info["mappings"]:
-            chrom = mapping.get("seq_region_name")
-            pos = mapping.get("start")
-            alleles = mapping.get("allele_string").split("/")
-
-            assembly = mapping.get("assembly_name")
-
-            valid = (assembly == "GRCh37" and
-                     chrom is not None and
-                     pos is not None and
-                     len(alleles) >= 2)
-
-            if found and valid:
-                logger.warning("Multiple mappings for '{}'.".format(name))
-            elif valid:
-                found = True
-                out[name] = Variant(name, chrom, pos, alleles)
-
-        if not found:
-            logger.warning(
-                "Could not find mappings for '{}'.".format(name)
-            )
 
     return out
