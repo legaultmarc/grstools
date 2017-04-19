@@ -5,3 +5,5 @@
 doc/build
 doc/source/includes/*_help.txt
 .idea
+dist
+grstools/version.py
