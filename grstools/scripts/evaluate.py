@@ -27,10 +27,12 @@ def _parse_phenotypes(args):
     """Parse a phenotypes file given the arguments added by
     _add_phenotype_arguments.
     """
-    return pd.read_csv(
+    df = pd.read_csv(
         args.phenotypes_filename, index_col=args.phenotypes_sample_column,
         sep=args.phenotypes_separator
     )
+    df.index = df.index.astype(str)
+    return df
 
 
 def _parse_and_regress(args, formula):
