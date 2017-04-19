@@ -7,8 +7,6 @@ import logging
 import pandas as pd
 import numpy as np
 
-from geneparse import Variant
-
 from genetest.subscribers import ResultsMemory
 from genetest.analysis import execute_formula
 from genetest.phenotypes.text import TextPhenotypes
@@ -19,12 +17,14 @@ logger = logging.getLogger(__name__)
 
 COL_TYPES = {
     "name": str, "chrom": str, "pos": int, "reference": str, "risk": str,
-    "p-value": float, "effect": float
+    "effect": float
 }
 
 
 def parse_computed_grs_file(filename):
-    return pd.read_csv(filename, sep=",", index_col="sample")
+    df = pd.read_csv(filename, sep=",", index_col="sample")
+    df.index = df.index.astype(str)
+    return df
 
 
 def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
@@ -42,6 +42,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
 
     Optional columns are:
         - maf
+        - p-value is optional if used to compute the GRS only.
 
     Returns:
         A pandas dataframe.
@@ -55,6 +56,9 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     if "maf" in df.columns:
         cols.append("maf")
 
+    if "p-value" in df.columns:
+        cols.append("p-value")
+
     # This will raise a KeyError if needed.
     df = df[cols]
 
@@ -63,11 +67,12 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     df["risk"] = df["risk"].str.upper()
 
     # Apply thresholds.
-    if log:
-        logger.info("Applying p-value threshold (p <= {})."
-                    "".format(p_threshold))
+    if "p-value" in df.columns:
+        if log:
+            logger.info("Applying p-value threshold (p <= {})."
+                        "".format(p_threshold))
 
-    df = df.loc[df["p-value"] <= p_threshold, :]
+        df = df.loc[df["p-value"] <= p_threshold, :]
 
     if "maf" in df.columns:
         if log:
