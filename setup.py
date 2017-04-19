@@ -6,13 +6,43 @@
 # python setup.py sdist --format gztar
 # python setup.py sdist --format zip
 
+import os
+
 from setuptools import setup, find_packages
 
 
+MAJOR = 0
+MINOR = 1
+MICRO = 0
+VERSION = "{}.{}.{}".format(MAJOR, MINOR, MICRO)
+
+
+def write_version_file(fn=None):
+    if fn is None:
+        fn = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            os.path.join("grstools", "version.py"),
+        )
+
+    content = (
+        "\n# THIS FILE WAS GENERATED AUTOMATICALLY BY GRSTOOLS SETUP.PY\n"
+        'grstools_version = "{version}"\n'
+    )
+
+    a = open(fn, "w")
+    try:
+        a.write(content.format(version=VERSION))
+    finally:
+        a.close()
+
+
 def setup_package():
+    # Saving the version into a file
+    write_version_file()
+
     setup(
         name="grstools",
-        version="0.1",
+        version=VERSION,
         description="Tools to manipulate genetic risk scores.",
         long_description="",
         author=u"Marc-André Legault",
@@ -30,6 +60,8 @@ def setup_package():
                 "grs-mr=grstools.scripts.mendelian_randomization:main",
             ],
         },
+        install_requires=["geneparse >= 0.1.0", "genetest >= 0.1.0",
+                          "matplotlib >= 2.0", "scipy >= 0.18"],
         classifiers=["Development Status :: 4 - Beta",
                      "Intended Audience :: Developers",
                      "Intended Audience :: Science/Research",
@@ -40,7 +72,6 @@ def setup_package():
                      "Programming Language :: Python :: 3",
                      "Topic :: Scientific/Engineering :: Bio-Informatics"],
         keywords="bioinformatics genomics grs genetic risk score",
-        install_requires=["numpy >= 1.8.1", "pandas >= 0.15"],
         zip_safe=False,
     )
 
