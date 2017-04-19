@@ -1,0 +1,146 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>File formats &mdash; grstools 0.1 documentation</title>
+    
+    <link rel="stylesheet" href="_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    './',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="grstools 0.1 documentation" href="index.html" />
+    <link rel="next" title="Command-line utilities" href="utilities.html" />
+    <link rel="prev" title="grstools" href="index.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head>
+  <body role="document">
+  <div class="document">
+    
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">grstools</a></h1>
+
+
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">File formats</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#the-grs-format">The GRS format</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html">Command-line utilities</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="index.html" title="previous chapter">grstools</a></li>
+      <li>Next: <a href="utilities.html" title="next chapter">Command-line utilities</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="file-formats">
+<h1>File formats<a class="headerlink" href="#file-formats" title="Permalink to this headline">¶</a></h1>
+<p>When possible, we try to use standard file formats for <cite>grstools</cite>. For
+instance, genotype data from various well-known file formats like VCF or plink
+are understood. Because we are not aware of standards for the description
+of genetic instruments, we define some expected file formats.</p>
+<div class="section" id="the-grs-format">
+<h2>The GRS format<a class="headerlink" href="#the-grs-format" title="Permalink to this headline">¶</a></h2>
+<p>The GRS format is used to describe genetic variants with a known effect size.
+In <cite>grstools</cite> it is used for two things:</p>
+<ul class="simple">
+<li>To select variants from  association summary statistics from large
+meta-analyses.</li>
+<li>To compute the GRS based on genotype data.</li>
+</ul>
+<p>The GRS format is a <strong>comma-delimited</strong> file containing the following columns:</p>
+<ul class="simple">
+<li><code class="docutils literal"><span class="pre">name</span></code> (mandatory unique identifier)</li>
+<li><code class="docutils literal"><span class="pre">chrom</span></code> (e.g. &#8220;1&#8221;, &#8220;22&#8221;, &#8220;X&#8221;, &#8220;MT&#8221;)</li>
+<li><code class="docutils literal"><span class="pre">pos</span></code> (the position e.g. 68184194)</li>
+<li><code class="docutils literal"><span class="pre">reference</span></code> (the allele that is used as the reference in the effect
+estimate)</li>
+<li><code class="docutils literal"><span class="pre">risk</span></code> (the risk, or effect allele)</li>
+<li><code class="docutils literal"><span class="pre">p-value</span></code> (mandatory for the selection of variants but optional for the
+computation of the GRS. This is the association p-value)</li>
+<li><code class="docutils literal"><span class="pre">effect</span></code> (a weighting term used in the computation of the GRS. Concretely,
+this is likely to be an estimated <span class="math">\(\beta\)</span> or odds ratio).</li>
+</ul>
+<p>Optional columns are also useful in some cases:</p>
+<ul class="simple">
+<li><code class="docutils literal"><span class="pre">maf</span></code> The minor allele frequency can be used in the selection of variants
+or to optimize LD computations by removing rare variants. It can also be used
+to distinguish ambiguous allele combinations (i.e. A/T or G/C).</li>
+</ul>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+    <div class="clearer"></div>
+  </div>
+    <div class="footer">
+      &copy;2017, Marc-André Legault.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.4.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.10</a>
+      
+      |
+      <a href="_sources/formats.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
