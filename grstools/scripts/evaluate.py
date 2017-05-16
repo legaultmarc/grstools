@@ -123,11 +123,11 @@ def _logistic_regress_plot(df, stats, out):
         "".format(odds_ratio, odds_ratio_ci[0], odds_ratio_ci[1],
                   stats["p-value"])
     ]
-    levels = df["y"].unique()
+    levels = sorted(df["y"].dropna().unique())
     boxplot_data = []
     for i, level in enumerate(levels):
         data = df.loc[df["y"] == level, "grs"]
-        boxplot_data.append(data)
+        boxplot_data.append(data.dropna().values)
 
         noise = (np.random.random(data.shape[0]) - 0.5) / 4
         lines, = plt.plot(
@@ -241,6 +241,7 @@ def roc_curve(args):
 
     phenotypes = _parse_phenotypes(args)
     df = phenotypes.join(grs)
+    df = df.dropna()
 
     artists = []
     labels = []
