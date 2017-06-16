@@ -164,8 +164,16 @@ def read_summary_statistics(filename, p_threshold, sep=",",
         if info["p-value"] > p_threshold:
             break
 
-        variant = geneparse.Variant(info["name"], info.chrom, info.pos,
-                                    [info.reference, info.risk])
+        try:
+            variant = geneparse.Variant(info["name"], info.chrom, info.pos,
+                                        [info.reference, info.risk])
+        except InvalidChromosome:
+            logger.warning(
+                "Invalid chromosome passed to variant: {} chr{}:{}_{}/{}"
+                "".format(name, info.chrom, info.pos, info.reference,
+                          info.risk)
+            )
+            continue
 
         # Region based inclusion/exclusion
         if region is not None:
@@ -175,7 +183,6 @@ def read_summary_statistics(filename, p_threshold, sep=",",
         if exclude_region is not None:
             if _in_region(variant, *exclude_region):
                 continue
-            
 
         if variant.alleles_ambiguous() and not keep_ambiguous:
             continue
