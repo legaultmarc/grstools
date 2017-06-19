@@ -2,13 +2,13 @@
 Compute the GRS from genotypes and a GRS file.
 """
 
-import collections
 import logging
 import argparse
 
 import numpy as np
 import pandas as pd
 import geneparse
+import geneparse.config
 from geneparse.core import complement_alleles
 
 from ..utils import parse_grs_file
@@ -16,9 +16,14 @@ from ..utils import parse_grs_file
 
 logger = logging.getLogger(__name__)
 
-ScoreInfo = collections.namedtuple(
-    "ScoreInfo", ["effect", "reference", "risk"]
-)
+
+class ScoreInfo(object):
+    __slots__ = ("effect", "reference", "risk")
+
+    def __init__(self, effect, reference, risk):
+        self.effect = effect
+        self.reference = reference
+        self.risk = risk
 
 
 def compute_grs(samples, genotypes_and_info, quality_weight=True,
@@ -95,6 +100,7 @@ def main():
 
             genotypes_kwargs[key] = value
 
+    geneparse.config.LOG_NOT_FOUND = False
     reader = geneparse.parsers[args.genotypes_format]
     reader = reader(
         args.genotypes,
