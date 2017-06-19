@@ -9,6 +9,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import geneparse
+from geneparse.core import complement_alleles
 
 from ..utils import parse_grs_file
 
@@ -114,10 +115,21 @@ def main():
         g = reader.get_variant_genotypes(v)
 
         if len(g) == 0:
-            logger.warning(
-                "Excluding {} (no available genotypes)."
-                "".format(v)
-            )
+            # Maybe the other strand is on the chip.
+            v.complement_alleles()
+            info.reference = complement_alleles(info.reference)
+            info.risk = complement_alleles(info.risk)
+            g = reader.get_variant_genotypes(v)
+
+            if len(g) == 0:
+                logger.warning("Excluding {} (no available genotypes)."
+                               "".format(v))
+                continue
+            else:
+                logger.info(
+                    "Found variant {} after complementation (on the other "
+                    "strand).".format(v)
+                )
         elif len(g) == 1:
             genotypes_and_info.append((g[0], info))
         else:
