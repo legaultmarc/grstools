@@ -18,6 +18,7 @@ import bisect
 import collections
 
 import geneparse
+from geneparse.exceptions import InvalidChromosome
 
 import numpy as np
 
@@ -145,7 +146,7 @@ def read_summary_statistics(filename, p_threshold, sep=",",
         except InvalidChromosome:
             logger.warning(
                 "Invalid chromosome passed to variant: {} chr{}:{}_{}/{}"
-                "".format(name, info.chrom, info.pos, info.reference,
+                "".format(info["name"], info.chrom, info.pos, info.reference,
                           info.risk)
             )
             continue
