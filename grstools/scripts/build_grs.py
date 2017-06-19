@@ -139,7 +139,8 @@ def main():
                     "Found variant {} after complementation (on the other "
                     "strand).".format(v)
                 )
-        elif len(g) == 1:
+
+        if len(g) == 1:
             genotypes_and_info.append((g[0], info))
         else:
             logger.warning(
