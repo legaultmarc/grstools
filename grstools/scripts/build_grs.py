@@ -30,6 +30,7 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
                 ignore_ambiguous=True):
     quality_weight_warned = False
 
+    n_variants_used = 0
     grs = None
     for g, info in genotypes_and_info:
         # Note: some people use the MAF instead of 0.
@@ -65,11 +66,13 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
 
             cur *= g.variant.quality
 
+        n_variants_used += 1
         if grs is None:
             grs = cur
         else:
             grs += cur
 
+    logger.info("Computed the GRS using {} variants.".format(n_variants_used))
     return pd.DataFrame(grs, index=samples, columns=["grs"])
 
 
