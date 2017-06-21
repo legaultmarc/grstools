@@ -2,31 +2,6 @@
 Multiple utilities to manipulate computed GRS.
 """
 
-# This file is part of grstools.
-#
-# The MIT License (MIT)
-#
-# Copyright (c) 2017 Marc-Andre Legault
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-
-
 import logging
 import argparse
 
@@ -36,9 +11,16 @@ import scipy.stats
 import matplotlib
 import matplotlib.pyplot as plt
 
+import geneparse
 
 from ..utils import parse_computed_grs_file
 
+from genetest.phenotypes import TextPhenotypes
+
+import genetest.modelspec as spec
+from genetest.analysis import execute
+from genetest.statistics import model_map
+from genetest.subscribers import ResultsMemory
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -136,6 +118,116 @@ def correlation(args):
         plt.show()
 
 
+def beta_coefficient(args):
+    # Get variants from summary stats file
+    stats_variant = []
+    stats_df = pd.read_csv(args.variants)
+
+    for idx, row in stats_df.iterrows():
+        v = geneparse.Variant(row["name"],
+                              row["chrom"],
+                              row["pos"],
+                              [row["reference"], row["risk"]])
+        stats_variant.append(v)
+
+    # Extract genotypes
+    if args.genotypes_format not in geneparse.parsers.keys():
+        raise ValueError(
+            "Unknown reference format '{}'. Must be a genetest compatible "
+            "format ({})."
+            "".format(args.genotypes_format, list(geneparse.parsers.keys()))
+        )
+
+    genotypes_kwargs = {}
+    if args.genotypes_kwargs:
+        for argument in args.genotypes_kwargs.split(","):
+            key, value = argument.strip().split("=")
+
+            if value.startswith("int:"):
+                value = int(value[4:])
+
+            elif value.startswith("float:"):
+                value = float(value[6:])
+
+            genotypes_kwargs[key] = value
+
+    reader = geneparse.parsers[args.genotypes_format]
+    reader = reader(
+        args.genotypes_filename,
+        **genotypes_kwargs
+    )
+    extractor = geneparse.Extractor(reader, variants=stats_variant)
+
+    # MODELSPEC
+    # Phenotype container
+    phenotypes = TextPhenotypes(args.phenotypes_filename,
+                                sample_column=args.phenotypes_sample_column,
+                                field_separator=args.phenotypes_separator)
+
+    if args.test == "linear":
+        model = spec.ModelSpec(
+            outcome=spec.phenotypes[args.phenotype],
+            predictors=[spec.SNPs],
+            test=lambda:
+                model_map[args.test](condition_value_t=float("infinity")), )
+
+    else:
+        model = spec.ModelSpec(
+            outcome=spec.phenotypes[args.phenotype],
+            predictors=[spec.SNPs],
+            test=args.test)
+
+    results_sub = ResultsMemory()
+
+    execute(phenotypes,
+            extractor,
+            model,
+            subscribers=[results_sub], cpus=10)
+
+    # Put results from beta computation in df
+    df = pd.DataFrame(results_sub.results)
+    df_snps = pd.DataFrame(list(df.SNPs))
+
+    df_snps.chrom = df_snps.chrom.map(lambda x: str(x)[3:])
+    df_snps.chrom = df_snps.chrom.astype('int64')
+
+    # Combine results from beta computation with summary stats
+    df_all = pd.merge(df_snps,
+                      stats_df,
+                      how='outer',
+                      left_on=['chrom', 'pos'],
+                      right_on=['chrom', 'pos'],
+                      indicator=True)
+
+    df_common = df_all.query('_merge == "both"')
+
+    # Variants with no computed beta
+    df_stats_only = df_all.query('_merge != "both"')
+    for idx, row in df_stats_only.iterrows():
+        logger.warning("No beta computed for variant on chromosome {} "
+                       "at position {}.".format(row.chrom, row.pos))
+
+    # Get same risk and reference alleles for summary and computed stats
+    df_inverted = df_common.loc[df_common.major != df_common.reference]
+    df_inverted.major = df_inverted.reference
+    df_inverted.minor = df_inverted.risk
+    df_inverted.coef = abs(df_inverted.coef)
+
+    df_not_inverted = df_common.loc[df_common.major == df_common.reference]
+
+    df_common_sameAlleles = pd.concat([df_inverted, df_not_inverted])
+
+    # Plot computed beta and effect from summary stats
+    plt.plot(df_common_sameAlleles.effect, df_common_sameAlleles.coef, 'ro')
+    plt.xlabel('Summary statistics coefficients')
+    plt.ylabel('Computed coefficients')
+
+    if args.out.endswith(".png"):
+        plt.savefig(args.out, dpi=300)
+    else:
+        plt.savefig(args.out)
+
+
 def main():
     args = parse_args()
 
@@ -144,6 +236,7 @@ def main():
         "quantiles": quantiles,
         "standardize": standardize,
         "correlation": correlation,
+        "beta_coefficient": beta_coefficient
     }
 
     command_handlers[args.command](args)
@@ -216,6 +309,91 @@ def parse_args():
     correlation.add_argument(
         "grs_filename2",
         help="Filename of the second GRS."
+    )
+
+    # Beta_coefficients
+    beta_coefficient = subparser.add_parser(
+        "beta_coefficient",
+        help="Compute beta coefficients from given genotypes "
+             "data and compare them with beta coefficients from the "
+             "grs file."
+    )
+
+    beta_coefficient.add_argument(
+        "--variants",
+        help="File describing the selected variants for GRS. "
+             "The file must be in grs format",
+        type=str,
+        required=True
+    )
+
+    beta_coefficient.add_argument(
+        "--genotypes-filename",
+        help="File containing genotype data.",
+        type=str,
+        required=True
+    )
+
+    beta_coefficient.add_argument(
+        "--genotypes-format",
+        help=("File format of the genotypes in the reference (default:"
+              "%(default)s)."),
+        default="plink"
+    )
+
+    beta_coefficient.add_argument(
+        "--genotypes-kwargs",
+        help="Keyword arguments to pass to the genotype container."
+             "A string of the following format is expected: "
+             "key1=value1,key2=value2..."
+             "It is also possible to prefix the values by 'int:' or 'float:' "
+             "to cast them before passing them to the constructor.",
+        type=str
+    )
+
+    beta_coefficient.add_argument(
+        "--phenotype",
+        help="Column name of phenotype in phenotypes file",
+        type=str,
+        required=True
+    )
+
+    beta_coefficient.add_argument(
+        "--phenotypes-filename",
+        help="File containing phenotype data",
+        type=str,
+        required=True
+    )
+
+    beta_coefficient.add_argument(
+        "--phenotypes-separator",
+        help="Separator in the phenotypes file (default:"
+             "%(default)s).",
+        type=str,
+        default=","
+    )
+
+    beta_coefficient.add_argument(
+        "--phenotypes-sample-column",
+        help=("Column name of target phenotype (default:"
+              "%(default)s)."),
+        type=str,
+        default="sample"
+    )
+
+    beta_coefficient.add_argument(
+        "--test",
+        help="Test to perform for beta coefficients estimation",
+        type=str,
+        required=True,
+        choices=["linear", "logistic"]
+    )
+
+    beta_coefficient.add_argument(
+        "--out", "-o",
+        help=("Output filename for beta coefficients (default:"
+              "%(default)s)."),
+        default="beta_coefficients_plot.png"
     )
 
     return parser.parse_args()
