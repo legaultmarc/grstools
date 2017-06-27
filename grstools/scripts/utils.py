@@ -2,6 +2,31 @@
 Multiple utilities to manipulate computed GRS.
 """
 
+# This file is part of grstools.
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2017 Marc-Andre Legault
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+
 import logging
 import argparse
 
@@ -20,7 +45,9 @@ from genetest.phenotypes import TextPhenotypes
 import genetest.modelspec as spec
 from genetest.analysis import execute
 from genetest.statistics import model_map
-from genetest.subscribers import ResultsMemory
+from genetest.subscribers import Subscriber
+
+from multiprocessing import cpu_count
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +55,47 @@ logger = logging.getLogger(__name__)
 
 plt.style.use("ggplot")
 matplotlib.rc("font", size="6")
+
+
+class beta_tuple(object):
+    __slots__ = ("e_risk", "e_coef", "e_error",
+                 "o_risk", "o_coef", "o_error")
+
+    def __init__(self, e_risk, e_coef, e_error,
+                 o_risk, o_coef, o_error):
+        # e:expected
+        self.e_risk = e_risk
+        self.e_coef = e_coef
+        self.e_error = e_error
+
+        # o:observed (computed)
+        self.o_risk = o_risk
+        self.o_coef = o_coef
+        self.o_error = o_error
+
+
+class custom_subscriber(Subscriber):
+
+    def __init__(self, variant_to_expected):
+        self.variant_to_expected = variant_to_expected
+
+    def handle(self, results):
+        v = geneparse.Variant("None",
+                              results["SNPs"]["chrom"].strip("chr"),
+                              results["SNPs"]["pos"],
+                              [results["SNPs"]["major"],
+                               results["SNPs"]["minor"]])
+
+        # Same reference and risk alleles for expected and observed
+        if self.variant_to_expected[v].e_risk == results["SNPs"]["minor"]:
+            self.variant_to_expected[v].o_risk = results["SNPs"]["minor"]
+            self.variant_to_expected[v].o_coef = results["SNPs"]["coef"]
+
+        else:
+            self.variant_to_expected[v].o_risk = results["SNPs"]["major"]
+            self.variant_to_expected[v].o_coef = -results["SNPs"]["coef"]
+
+        self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
 
 
 def histogram(args):
@@ -118,17 +186,18 @@ def correlation(args):
         plt.show()
 
 
-def beta_coefficient(args):
-    # Get variants from summary stats file
-    stats_variant = []
-    stats_df = pd.read_csv(args.variants)
+def beta_plot(args):
+    # Key:Variant instance, value: beta_tuple instance
+    variant_to_expected = {}
 
-    for idx, row in stats_df.iterrows():
-        v = geneparse.Variant(row["name"],
-                              row["chrom"],
-                              row["pos"],
-                              [row["reference"], row["risk"]])
-        stats_variant.append(v)
+    # Get variants from summary stats file
+    with open(args.variants, "r") as f:
+        next(f)
+        for line in f:
+            l = line.split(",")
+            v = geneparse.Variant("None", l[1], l[2], [l[3], l[4]])
+            variant_to_expected[v] = beta_tuple(l[4], l[6], "None",
+                                                "None", "None", "None")
 
     # Extract genotypes
     if args.genotypes_format not in geneparse.parsers.keys():
@@ -156,7 +225,9 @@ def beta_coefficient(args):
         args.genotypes_filename,
         **genotypes_kwargs
     )
-    extractor = geneparse.Extractor(reader, variants=stats_variant)
+
+    extractor = geneparse.Extractor(reader,
+                                    variants=variant_to_expected.keys())
 
     # MODELSPEC
     # Phenotype container
@@ -164,63 +235,58 @@ def beta_coefficient(args):
                                 sample_column=args.phenotypes_sample_column,
                                 field_separator=args.phenotypes_separator)
 
+    # Test
     if args.test == "linear":
-        model = spec.ModelSpec(
-            outcome=spec.phenotypes[args.phenotype],
-            predictors=[spec.SNPs],
-            test=lambda:
-                model_map[args.test](condition_value_t=float("infinity")), )
+        def test_specification():
+            return model_map[args.test](
+                condition_value_t=float("infinity")
+            )
 
     else:
-        model = spec.ModelSpec(
-            outcome=spec.phenotypes[args.phenotype],
-            predictors=[spec.SNPs],
-            test=args.test)
+        test_specification = args.test
 
-    results_sub = ResultsMemory()
+    # Covariates
+    pred = [spec.SNPs]
+    if args.covar is not None:
+        print("in covar")
+        covar = args.covar.split(",")
+        for c in covar:
+            pred.append(spec.phenotypes[c])
 
+    # Model
+    model = spec.ModelSpec(
+        outcome=spec.phenotypes[args.phenotype],
+        predictors=pred,
+        test=test_specification)
+
+    # Subscriber
+    custom_sub = custom_subscriber(variant_to_expected)
+
+    # Execution
     execute(phenotypes,
             extractor,
             model,
-            subscribers=[results_sub], cpus=10)
+            subscribers=[custom_sub], cpus=args.cpus)
 
-    # Put results from beta computation in df
-    df = pd.DataFrame(results_sub.results)
-    df_snps = pd.DataFrame(list(df.SNPs))
+    # Plot observed and expected beta coefficients
+    xs = []
 
-    df_snps.chrom = df_snps.chrom.map(lambda x: str(x)[3:])
-    df_snps.chrom = df_snps.chrom.astype('int64')
+    ys = []
+    ys_error = []
 
-    # Combine results from beta computation with summary stats
-    df_all = pd.merge(df_snps,
-                      stats_df,
-                      how='outer',
-                      left_on=['chrom', 'pos'],
-                      right_on=['chrom', 'pos'],
-                      indicator=True)
+    for variant, statistic in variant_to_expected.items():
+        if statistic.o_coef is "None":
+            logger.warning("No statistic for {}".format(variant))
 
-    df_common = df_all.query('_merge == "both"')
+        else:
+            xs.append(float(statistic.e_coef))
+            ys.append(statistic.o_coef)
+            ys_error.append(statistic.o_error)
 
-    # Variants with no computed beta
-    df_stats_only = df_all.query('_merge != "both"')
-    for idx, row in df_stats_only.iterrows():
-        logger.warning("No beta computed for variant on chromosome {} "
-                       "at position {}.".format(row.chrom, row.pos))
-
-    # Get same risk and reference alleles for summary and computed stats
-    df_inverted = df_common.loc[df_common.major != df_common.reference]
-    df_inverted.major = df_inverted.reference
-    df_inverted.minor = df_inverted.risk
-    df_inverted.coef = abs(df_inverted.coef)
-
-    df_not_inverted = df_common.loc[df_common.major == df_common.reference]
-
-    df_common_sameAlleles = pd.concat([df_inverted, df_not_inverted])
-
-    # Plot computed beta and effect from summary stats
-    plt.plot(df_common_sameAlleles.effect, df_common_sameAlleles.coef, 'ro')
-    plt.xlabel('Summary statistics coefficients')
-    plt.ylabel('Computed coefficients')
+    plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
+                 markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
+    plt.xlabel('Expected coefficients')
+    plt.ylabel('Observed coefficients')
 
     if args.out.endswith(".png"):
         plt.savefig(args.out, dpi=300)
@@ -236,7 +302,7 @@ def main():
         "quantiles": quantiles,
         "standardize": standardize,
         "correlation": correlation,
-        "beta_coefficient": beta_coefficient
+        "beta-plot": beta_plot
     }
 
     command_handlers[args.command](args)
@@ -311,15 +377,15 @@ def parse_args():
         help="Filename of the second GRS."
     )
 
-    # Beta_coefficients
-    beta_coefficient = subparser.add_parser(
-        "beta_coefficient",
+    # Beta_plot
+    beta_plot = subparser.add_parser(
+        "beta-plot",
         help="Compute beta coefficients from given genotypes "
              "data and compare them with beta coefficients from the "
              "grs file."
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--variants",
         help="File describing the selected variants for GRS. "
              "The file must be in grs format",
@@ -327,21 +393,21 @@ def parse_args():
         required=True
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--genotypes-filename",
         help="File containing genotype data.",
         type=str,
         required=True
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--genotypes-format",
         help=("File format of the genotypes in the reference (default:"
               "%(default)s)."),
         default="plink"
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--genotypes-kwargs",
         help="Keyword arguments to pass to the genotype container."
              "A string of the following format is expected: "
@@ -351,21 +417,21 @@ def parse_args():
         type=str
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--phenotype",
         help="Column name of phenotype in phenotypes file",
         type=str,
         required=True
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--phenotypes-filename",
         help="File containing phenotype data",
         type=str,
         required=True
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--phenotypes-separator",
         help="Separator in the phenotypes file (default:"
              "%(default)s).",
@@ -373,7 +439,7 @@ def parse_args():
         default=","
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--phenotypes-sample-column",
         help=("Column name of target phenotype (default:"
               "%(default)s)."),
@@ -381,7 +447,7 @@ def parse_args():
         default="sample"
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--test",
         help="Test to perform for beta coefficients estimation",
         type=str,
@@ -389,11 +455,26 @@ def parse_args():
         choices=["linear", "logistic"]
     )
 
-    beta_coefficient.add_argument(
+    beta_plot.add_argument(
         "--out", "-o",
         help=("Output filename for beta coefficients (default:"
               "%(default)s)."),
-        default="beta_coefficients_plot.png"
+        default="beta_plot.png"
+    )
+
+    beta_plot.add_argument(
+        "--cpus",
+        help=("Number of cpus to use for execution (default: "
+              "number of cpus - 1 = %(default)s)."),
+        type=int,
+        default=cpu_count() - 1
+    )
+
+    beta_plot.add_argument(
+        "--covar",
+        help=("Covariates other than the SNPs from summary stats. "
+              "Covariates should be in string form, separated by , "
+              "covar1,covar2,covar3...")
     )
 
     return parser.parse_args()
