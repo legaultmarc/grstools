@@ -446,18 +446,49 @@ def main():
         debug = True
         logger.setLevel(logging.DEBUG)
 
-    # Parameters
-    p_threshold = args.p_threshold
-    target_n = args.target_n
-    maf_threshold = args.maf_threshold
-    ld_threshold = args.ld_threshold
-    ld_window_size = args.ld_window_size
-    keep_ambiguous = args.keep_ambiguous_alleles
-    region = args.region
-    exclude_region = args.exclude_region
+    logger.info("Starting variant selection using the following parameters: ")
 
     summary_filename = args.summary
+    logger.info("\tSummary statistics file: '{}'".format(summary_filename))
+
     reference_filename = args.reference
+    logger.info("\tReference panel (for LD and MAF): '{}'"
+                "".format(reference_filename))
+
+    # Parameters
+    p_threshold = args.p_threshold
+    logger.info("\tp-value threshold: {:g}".format(p_threshold))
+
+    target_n = args.target_n
+    if target_n:
+        logger.info("\tSelecting variants until n={}".format(target_n))
+
+    maf_threshold = args.maf_threshold
+    logger.info("\tMAF threshold: {}".format(maf_threshold))
+
+    ld_threshold = args.ld_threshold
+    logger.info("\tClumping variants with R2 > {}".format(ld_threshold))
+
+    ld_window_size = args.ld_window_size
+    logger.info("\tLD will be computed in windows of {:,.0f} bases"
+                "".format(ld_window_size))
+
+    keep_ambiguous = args.keep_ambiguous_alleles
+    logger.info(
+        "\tAmbiguous alleles will be {}"
+        "".format("INCLUDED" if keep_ambiguous else "EXCLUDED")
+    )
+
+    region = args.region
+    if region:
+        logger.info("\tRestricting selection to region {}".format(region))
+
+    exclude_region = args.exclude_region
+    if exclude_region:
+        logger.info(
+            "\tExcluding variants from region {}".format(exclude_region)
+        )
+
     output_filename = args.output
 
     # Read the summary statistics.
