@@ -56,7 +56,12 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
             )
             continue
 
-        cur = g.genotypes * info.effect
+        # Always use the allele with a positive effect when adding to the
+        # score.
+        if info.effect < 0:
+            cur = (2 - g.genotypes) * -info.effect
+        else:
+            cur = g.genotypes * info.effect
 
         # Weight by quality if available.
         if isinstance(g.variant, geneparse.ImputedVariant) and quality_weight:
