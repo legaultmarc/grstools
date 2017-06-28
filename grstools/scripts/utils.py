@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 from ..utils import parse_computed_grs_file
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
