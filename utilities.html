@@ -1,12 +1,12 @@
+
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-
 
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     
-    <title>Command-line utilities &mdash; grstools 0.1 documentation</title>
+    <title>Command-line utilities &#8212; grstools 0.1 documentation</title>
     
     <link rel="stylesheet" href="_static/alabaster.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
@@ -17,14 +17,16 @@
         VERSION:     '0.1',
         COLLAPSE_INDEX: false,
         FILE_SUFFIX: '.html',
-        HAS_SOURCE:  true
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
       };
     </script>
     <script type="text/javascript" src="_static/jquery.js"></script>
     <script type="text/javascript" src="_static/underscore.js"></script>
     <script type="text/javascript" src="_static/doctools.js"></script>
-    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
-    <link rel="top" title="grstools 0.1 documentation" href="index.html" />
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
     <link rel="prev" title="File formats" href="formats.html" />
    
   <link rel="stylesheet" href="_static/custom.css" type="text/css" />
@@ -33,7 +35,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
 
   </head>
-  <body role="document">
+  <body>
   <div class="document">
     
       <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
@@ -73,8 +75,8 @@
 <div id="searchbox" style="display: none" role="search">
   <h3>Quick search</h3>
     <form class="search" action="search.html" method="get">
-      <input type="text" name="q" />
-      <input type="submit" value="Go" />
+      <div><input type="text" name="q" /></div>
+      <div><input type="submit" value="Go" /></div>
       <input type="hidden" name="check_keywords" value="yes" />
       <input type="hidden" name="area" value="default" />
     </form>
@@ -90,7 +92,7 @@
 <h1>Command-line utilities<a class="headerlink" href="#command-line-utilities" title="Permalink to this headline">¶</a></h1>
 <div class="section" id="grs-compute">
 <span id="id1"></span><h2><code class="docutils literal"><span class="pre">grs-compute</span></code><a class="headerlink" href="#grs-compute" title="Permalink to this headline">¶</a></h2>
-<p>Computes the GRS using a &#8216;.grs&#8217; file and individual-level genotypes.</p>
+<p>Computes the GRS using a ‘.grs’ file and individual-level genotypes.</p>
 <p>The GRS are computed using the following formula:</p>
 <div class="math">
 \[GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij}\]</div>
@@ -98,6 +100,13 @@
 indexes the genetic variants included in the score, <span class="math">\(\beta_j\)</span> is the
 coefficient estimated from the summary statistics and <span class="math">\(X_{ij}\)</span> is the
 number of effect alleles carried by individual <cite>i</cite> at variant <cite>j</cite>.</p>
+<div class="admonition note">
+<p class="first admonition-title">Note</p>
+<p class="last">If the coefficient (<span class="math">\(\beta\)</span>) is negative, it’s additive inverse is
+used instead (<span class="math">\(-\beta\)</span>) and the effect and reference alleles are
+swapped accordingly. This ensures that contributions to the GRS are always
+positive.</p>
+</div>
 <p>If the IMPUTE2 format is used to hold the genotype information, the variants
 are further weighted by the INFO score as a form of genotype confidence
 weighting:</p>
@@ -166,7 +175,7 @@ computationally intensive.</p>
 <p>For now, a plink binary file is required for the reference. A
 population-specific reference panel like the 1000 genomes phase 3 should be
 used.</p>
-<p>This script generates a &#8216;grs&#8217; file that is suitable for computing the GRS using
+<p>This script generates a ‘grs’ file that is suitable for computing the GRS using
 <a class="reference internal" href="#grs-compute"><span class="std std-ref">grs-compute</span></a>.</p>
 <div class="highlight-none"><div class="highlight"><pre><span></span>usage: grs-create [-h] [--p-threshold P_THRESHOLD] [--target-n TARGET_N]
                   [--maf-threshold MAF_THRESHOLD]
@@ -257,7 +266,7 @@ optional arguments:
 <p>This tool contains multiple features to manipulate GRS after they have been
 computed. Most of these tools either generate plots (as png files) or modified
 versions of the computed GRS. The latter file format is simply a CSV with a
-&#8216;sample&#8217; and a &#8216;grs&#8217; column.</p>
+‘sample’ and a ‘grs’ column.</p>
 <div class="section" id="histogram">
 <h3>histogram<a class="headerlink" href="#histogram" title="Permalink to this headline">¶</a></h3>
 <p>The histogram sub-command generates a histogram of all the GRS values. Here is
@@ -281,8 +290,8 @@ an example:</p>
 </pre></div>
 </div>
 <p>The output file will contain two columns and a header: <code class="docutils literal"><span class="pre">sample</span></code> and
-<code class="docutils literal"><span class="pre">group</span></code>. The group &#8216;0&#8217; contains the individuals with lower values of the GRS
-and the group &#8216;1&#8217; contains individuals with high values of the GRS.</p>
+<code class="docutils literal"><span class="pre">group</span></code>. The group ‘0’ contains the individuals with lower values of the GRS
+and the group ‘1’ contains individuals with high values of the GRS.</p>
 </div>
 <div class="section" id="standardize">
 <h3>standardize<a class="headerlink" href="#standardize" title="Permalink to this headline">¶</a></h3>
@@ -351,7 +360,7 @@ follows:</p>
 <img alt="_images/evaluate-regress-binary.png" src="_images/evaluate-regress-binary.png" />
 <p>In this plot, the perspective is somewhat reversed, when compared with the
 linear case. The GRS is now in the y axis and its distribution is shown in
-cases and controls. The more general term &#8220;level&#8221; is used to describe the
+cases and controls. The more general term “level” is used to describe the
 discrete numerical values of the phenotype as it could be used for factor
 variables.</p>
 <p>The results for the logistic regression are shown on the plot. The OR
@@ -369,9 +378,9 @@ select a more robust threshold.</p>
 <p>The dichotmization is done by comparing the extremums of the distribution. For
 example, at the 0.25 quantile, the first quartile (1/4) is compared to the last
 quartile (4/4). All of the individuals in between can be used to form an
-&#8220;intermediate&#8221; group or can be excluded from downstream analyses. This is why
+“intermediate” group or can be excluded from downstream analyses. This is why
 the right axis represents the number of individuals that are classified in
-either the &#8220;high&#8221; or &#8220;low&#8221; group for a given dichotmization.</p>
+either the “high” or “low” group for a given dichotmization.</p>
 <img alt="_images/evaluate-dichotomize-plot.png" src="_images/evaluate-dichotomize-plot.png" />
 </div>
 <div class="section" id="roc">
@@ -408,11 +417,11 @@ optional arguments:
       &copy;2017, Marc-André Legault.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.4.1</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.6.1</a>
       &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.10</a>
       
       |
-      <a href="_sources/utilities.txt"
+      <a href="_sources/utilities.rst.txt"
           rel="nofollow">Page source</a>
     </div>
 
