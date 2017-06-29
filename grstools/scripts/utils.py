@@ -64,7 +64,7 @@ class BetaTuple(object):
     def __init__(self, e_risk, e_coef):
         # e:expected
         self.e_risk = e_risk
-        self.e_coef = e_coef
+        self.e_coef = float(e_coef)
         self.e_error = None
 
         # o:observed (computed)
@@ -208,11 +208,11 @@ def beta_plot(args):
         for line in f:
             l = line.split(",")
             v = geneparse.Variant(
-                    "None",
+                    None,
                     l[header_to_pos["chrom"]],
                     l[header_to_pos["pos"]],
                     [l[header_to_pos["reference"]],
-                        l[header_to_pos["risk"]]]
+                     l[header_to_pos["risk"]]]
             )
 
             variant_to_expected[v] = BetaTuple(
@@ -299,7 +299,7 @@ def beta_plot(args):
             logger.warning("No statistic for {}".format(variant))
 
         else:
-            xs.append(float(statistic.e_coef))
+            xs.append(statistic.e_coef)
             ys.append(statistic.o_coef)
             ys_error.append(statistic.o_error)
 
