@@ -57,31 +57,30 @@ plt.style.use("ggplot")
 matplotlib.rc("font", size="6")
 
 
-class beta_tuple(object):
+class BetaTuple(object):
     __slots__ = ("e_risk", "e_coef", "e_error",
                  "o_risk", "o_coef", "o_error")
 
-    def __init__(self, e_risk, e_coef, e_error,
-                 o_risk, o_coef, o_error):
+    def __init__(self, e_risk, e_coef):
         # e:expected
         self.e_risk = e_risk
         self.e_coef = e_coef
-        self.e_error = e_error
+        self.e_error = None
 
         # o:observed (computed)
-        self.o_risk = o_risk
-        self.o_coef = o_coef
-        self.o_error = o_error
+        self.o_risk = None
+        self.o_coef = None
+        self.o_error = None
 
 
-class custom_subscriber(Subscriber):
+class BetaSubscriber(Subscriber):
 
     def __init__(self, variant_to_expected):
         self.variant_to_expected = variant_to_expected
 
     def handle(self, results):
         v = geneparse.Variant("None",
-                              results["SNPs"]["chrom"].strip("chr"),
+                              results["SNPs"]["chrom"],
                               results["SNPs"]["pos"],
                               [results["SNPs"]["major"],
                                results["SNPs"]["minor"]])
@@ -192,12 +191,34 @@ def beta_plot(args):
 
     # Get variants from summary stats file
     with open(args.variants, "r") as f:
-        next(f)
+        header = f.readline()
+        header_to_pos = {title: pos for pos, title in enumerate(
+            header.strip().split(","))}
+
+        expected_headers = {"name", "chrom", "pos", "reference",
+                            "risk", "p-value", "effect"}
+
+        missing_headers = expected_headers - header_to_pos.keys()
+
+        if len(missing_headers) != 0:
+            raise ValueError(
+                    "Missing the columns {} in variants input file".format(
+                        ",".join(missing_headers)))
+
         for line in f:
             l = line.split(",")
-            v = geneparse.Variant("None", l[1], l[2], [l[3], l[4]])
-            variant_to_expected[v] = beta_tuple(l[4], l[6], "None",
-                                                "None", "None", "None")
+            v = geneparse.Variant(
+                    "None",
+                    l[header_to_pos["chrom"]],
+                    l[header_to_pos["pos"]],
+                    [l[header_to_pos["reference"]],
+                        l[header_to_pos["risk"]]]
+            )
+
+            variant_to_expected[v] = BetaTuple(
+                    l[header_to_pos["risk"]],
+                    l[header_to_pos["effect"]]
+            )
 
     # Extract genotypes
     if args.genotypes_format not in geneparse.parsers.keys():
@@ -248,10 +269,9 @@ def beta_plot(args):
     # Covariates
     pred = [spec.SNPs]
     if args.covar is not None:
-        print("in covar")
-        covar = args.covar.split(",")
-        for c in covar:
-            pred.append(spec.phenotypes[c])
+        pred.extend(
+                [spec.phenotypes[c] for c in args.covar.split(",")]
+        )
 
     # Model
     model = spec.ModelSpec(
@@ -260,7 +280,7 @@ def beta_plot(args):
         test=test_specification)
 
     # Subscriber
-    custom_sub = custom_subscriber(variant_to_expected)
+    custom_sub = BetaSubscriber(variant_to_expected)
 
     # Execution
     execute(phenotypes,
@@ -275,7 +295,7 @@ def beta_plot(args):
     ys_error = []
 
     for variant, statistic in variant_to_expected.items():
-        if statistic.o_coef is "None":
+        if statistic.o_coef is None:
             logger.warning("No statistic for {}".format(variant))
 
         else:
@@ -467,7 +487,7 @@ def parse_args():
         help=("Number of cpus to use for execution (default: "
               "number of cpus - 1 = %(default)s)."),
         type=int,
-        default=cpu_count() - 1
+        default=max(cpu_count() - 1, 1)
     )
 
     beta_plot.add_argument(
