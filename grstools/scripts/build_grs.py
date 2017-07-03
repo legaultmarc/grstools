@@ -34,21 +34,29 @@ import argparse
 import numpy as np
 import pandas as pd
 import geneparse
+import geneparse.config
+from geneparse.core import complement_alleles
 
 from ..utils import parse_grs_file
 
 
 logger = logging.getLogger(__name__)
 
-ScoreInfo = collections.namedtuple(
-    "ScoreInfo", ["effect", "reference", "risk"]
-)
+
+class ScoreInfo(object):
+    __slots__ = ("effect", "reference", "risk")
+
+    def __init__(self, effect, reference, risk):
+        self.effect = effect
+        self.reference = reference
+        self.risk = risk
 
 
 def compute_grs(samples, genotypes_and_info, quality_weight=True,
                 ignore_ambiguous=True):
     quality_weight_warned = False
 
+    n_variants_used = 0
     grs = None
     for g, info in genotypes_and_info:
         # Note: some people use the MAF instead of 0.
@@ -74,7 +82,12 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
             )
             continue
 
-        cur = g.genotypes * info.effect
+        # Always use the allele with a positive effect when adding to the
+        # score.
+        if info.effect < 0:
+            cur = (2 - g.genotypes) * -info.effect
+        else:
+            cur = g.genotypes * info.effect
 
         # Weight by quality if available.
         if isinstance(g.variant, geneparse.ImputedVariant) and quality_weight:
@@ -84,11 +97,13 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
 
             cur *= g.variant.quality
 
+        n_variants_used += 1
         if grs is None:
             grs = cur
         else:
             grs += cur
 
+    logger.info("Computed the GRS using {} variants.".format(n_variants_used))
     return pd.DataFrame(grs, index=samples, columns=["grs"])
 
 
@@ -119,6 +134,7 @@ def main():
 
             genotypes_kwargs[key] = value
 
+    geneparse.config.LOG_NOT_FOUND = False
     reader = geneparse.parsers[args.genotypes_format]
     reader = reader(
         args.genotypes,
@@ -139,11 +155,23 @@ def main():
         g = reader.get_variant_genotypes(v)
 
         if len(g) == 0:
-            logger.warning(
-                "Excluding {} (no available genotypes)."
-                "".format(v)
-            )
-        elif len(g) == 1:
+            # Maybe the other strand is on the chip.
+            v.complement_alleles()
+            info.reference = complement_alleles(info.reference)
+            info.risk = complement_alleles(info.risk)
+            g = reader.get_variant_genotypes(v)
+
+            if len(g) == 0:
+                logger.warning("Excluding {} (no available genotypes)."
+                               "".format(v))
+                continue
+            else:
+                logger.info(
+                    "Found variant {} after complementation (on the other "
+                    "strand).".format(v)
+                )
+
+        if len(g) == 1:
             genotypes_and_info.append((g[0], info))
         else:
             logger.warning(

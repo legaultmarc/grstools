@@ -191,6 +191,8 @@ def dichotomize_plot(args):
     df["group"] = np.nan
     df["intercept"] = 1
 
+    df = df[["group", "intercept", "grs", args.phenotype]]
+
     # Init the statistical test.
     test = model_map[args.test]()
 

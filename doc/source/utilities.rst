@@ -19,6 +19,12 @@ indexes the genetic variants included in the score, :math:`\beta_j` is the
 coefficient estimated from the summary statistics and :math:`X_{ij}` is the
 number of effect alleles carried by individual `i` at variant `j`.
 
+.. note::
+    If the coefficient (:math:`\beta`) is negative, it's additive inverse is
+    used instead (:math:`-\beta`) and the effect and reference alleles are
+    swapped accordingly. This ensures that contributions to the GRS are always
+    positive.
+
 If the IMPUTE2 format is used to hold the genotype information, the variants
 are further weighted by the INFO score as a form of genotype confidence
 weighting:

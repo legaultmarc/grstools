@@ -49,7 +49,6 @@ from genetest.subscribers import Subscriber
 
 from multiprocessing import cpu_count
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
