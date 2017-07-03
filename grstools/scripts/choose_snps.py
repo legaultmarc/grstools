@@ -109,13 +109,9 @@ def read_summary_statistics(filename, p_threshold, sep=",",
                             exclude_region=None):
     if region is not None:
         region = _parse_region(region)
-        logger.info("Only variants in region chr{}:{}-{} will be considered."
-                    "".format(*region))
 
     if exclude_region is not None:
         exclude_region = _parse_region(exclude_region)
-        logger.info("Only variants outside of region chr{}:{}-{} will be "
-                    "considered.".format(*exclude_region))
 
     # Variant to stats orderedict (but constructed as a list).
     summary = []
@@ -200,7 +196,8 @@ def extract_genotypes(filename, summary, maf_threshold):
         ref_geno = reference.get_variant_genotypes(variant)
 
         if len(ref_geno) == 0:
-            logger.warning("No genotypes for {}.".format(variant))
+            logger.warning("No genotype data for {} in reference panel "
+                           "(excluded from candidates).".format(variant))
 
         elif len(ref_geno) == 1:
             g = ref_geno[0].genotypes
