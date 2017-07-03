@@ -58,7 +58,7 @@ matplotlib.rc("font", size="6")
 
 class BetaTuple(object):
     __slots__ = ("e_risk", "e_coef", "e_error",
-                 "o_risk", "o_coef", "o_error")
+                 "o_risk", "o_coef", "o_error", "o_nobs")
 
     def __init__(self, e_risk, e_coef):
         # e:expected
@@ -70,6 +70,7 @@ class BetaTuple(object):
         self.o_risk = None
         self.o_coef = None
         self.o_error = None
+        self.o_nobs = None
 
 
 class BetaSubscriber(Subscriber):
@@ -94,6 +95,7 @@ class BetaSubscriber(Subscriber):
             self.variant_to_expected[v].o_coef = -results["SNPs"]["coef"]
 
         self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
+        self.variant_to_expected[v].o_nobs = results["MODEL"]["nobs"]
 
 
 def histogram(args):
@@ -189,7 +191,7 @@ def beta_plot(args):
     variant_to_expected = {}
 
     # Get variants from summary stats file
-    with open(args.variants, "r") as f:
+    with open(args.summary, "r") as f:
         header = f.readline()
         header_to_pos = {title: pos for pos, title in enumerate(
             header.strip().split(","))}
@@ -289,30 +291,43 @@ def beta_plot(args):
             model,
             subscribers=[custom_sub], cpus=args.cpus)
 
-    # Plot observed and expected beta coefficients
+    # Plot and write to file observed and expected beta coefficients
     xs = []
 
     ys = []
     ys_error = []
+
+    f = open(args.out + ".txt", "w")
+    f.write("chrom,position,alleles,risk,expected_coef,"
+            "observed_coef,observed_se,n\n")
 
     for variant, statistic in variant_to_expected.items():
         if statistic.o_coef is None:
             logger.warning("No statistic for {}".format(variant))
 
         else:
+            # Plot
             xs.append(statistic.e_coef)
             ys.append(statistic.o_coef)
             ys_error.append(statistic.o_error)
+
+            # File
+            line = [str(variant.chrom), str(variant.pos),
+                    variant.alleles[0] + variant.alleles[1],
+                    statistic.e_risk, str(statistic.e_coef),
+                    str(statistic.o_coef), str(statistic.o_error),
+                    str(statistic.o_nobs)]
+            line = ",".join(line)
+            f.write(line + "\n")
+
+    f.close()
 
     plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
                  markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
     plt.xlabel('Expected coefficients')
     plt.ylabel('Observed coefficients')
 
-    if args.out.endswith(".png"):
-        plt.savefig(args.out, dpi=300)
-    else:
-        plt.savefig(args.out)
+    plt.savefig(args.out + ".png")
 
 
 def main():
@@ -323,7 +338,7 @@ def main():
         "quantiles": quantiles,
         "standardize": standardize,
         "correlation": correlation,
-        "beta-plot": beta_plot
+        "beta-plot": beta_plot,
     }
 
     command_handlers[args.command](args)
@@ -407,7 +422,7 @@ def parse_args():
     )
 
     beta_plot.add_argument(
-        "--variants",
+        "--summary",
         help="File describing the selected variants for GRS. "
              "The file must be in grs format",
         type=str,
@@ -478,9 +493,9 @@ def parse_args():
 
     beta_plot.add_argument(
         "--out", "-o",
-        help=("Output filename for beta coefficients (default:"
+        help=("Output name for beta coefficients plot and file (default:"
               "%(default)s)."),
-        default="beta_plot.png"
+        default="observed_coefficients"
     )
 
     beta_plot.add_argument(
