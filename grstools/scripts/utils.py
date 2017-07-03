@@ -201,22 +201,24 @@ def beta_plot(args):
 
         if len(missing_headers) != 0:
             raise ValueError(
-                    "Missing the columns {} in variants input file".format(
-                        ",".join(missing_headers)))
+                "Missing the columns {} in variants input file".format(
+                    ",".join(missing_headers)
+                )
+            )
 
         for line in f:
             l = line.split(",")
             v = geneparse.Variant(
-                    None,
-                    l[header_to_pos["chrom"]],
-                    l[header_to_pos["pos"]],
-                    [l[header_to_pos["reference"]],
-                     l[header_to_pos["risk"]]]
+                None,
+                l[header_to_pos["chrom"]],
+                l[header_to_pos["pos"]],
+                [l[header_to_pos["reference"]],
+                 l[header_to_pos["risk"]]]
             )
 
             variant_to_expected[v] = BetaTuple(
-                    l[header_to_pos["risk"]],
-                    l[header_to_pos["effect"]]
+                l[header_to_pos["risk"]],
+                l[header_to_pos["effect"]]
             )
 
     # Extract genotypes
@@ -269,7 +271,7 @@ def beta_plot(args):
     pred = [spec.SNPs]
     if args.covar is not None:
         pred.extend(
-                [spec.phenotypes[c] for c in args.covar.split(",")]
+            [spec.phenotypes[c] for c in args.covar.split(",")]
         )
 
     # Model
