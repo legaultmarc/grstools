@@ -1,3 +1,6 @@
+[![PyPI version](https://badge.fury.io/py/grstools.svg)](http://badge.fury.io/py/grstools)
+
+
 Documentation
 --------------
 
