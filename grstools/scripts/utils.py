@@ -58,7 +58,7 @@ matplotlib.rc("font", size="6")
 
 class BetaTuple(object):
     __slots__ = ("e_risk", "e_coef", "e_error",
-                 "o_risk", "o_coef", "o_error", "o_nobs")
+                 "o_risk", "o_coef", "o_error", "o_maf", "o_nobs")
 
     def __init__(self, e_risk, e_coef):
         # e:expected
@@ -70,6 +70,7 @@ class BetaTuple(object):
         self.o_risk = None
         self.o_coef = None
         self.o_error = None
+        self.o_maf = None
         self.o_nobs = None
 
 
@@ -89,10 +90,12 @@ class BetaSubscriber(Subscriber):
         if self.variant_to_expected[v].e_risk == results["SNPs"]["minor"]:
             self.variant_to_expected[v].o_risk = results["SNPs"]["minor"]
             self.variant_to_expected[v].o_coef = results["SNPs"]["coef"]
+            self.variant_to_expected[v].o_maf = results["SNPs"]["maf"]
 
         else:
             self.variant_to_expected[v].o_risk = results["SNPs"]["major"]
             self.variant_to_expected[v].o_coef = -results["SNPs"]["coef"]
+            self.variant_to_expected[v].o_maf = 1 - results["SNPs"]["maf"]
 
         self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
         self.variant_to_expected[v].o_nobs = results["MODEL"]["nobs"]
@@ -299,7 +302,7 @@ def beta_plot(args):
 
     f = open(args.out + ".txt", "w")
     f.write("chrom,position,alleles,risk,expected_coef,"
-            "observed_coef,observed_se,n\n")
+            "observed_coef,observed_se,observed_maf,n\n")
 
     for variant, statistic in variant_to_expected.items():
         if statistic.o_coef is None:
@@ -315,10 +318,10 @@ def beta_plot(args):
 
             # File
             line = [str(variant.chrom), str(variant.pos),
-                    variant.alleles[0] + variant.alleles[1],
+                    "/".join(variant.alleles_set),
                     statistic.e_risk, str(statistic.e_coef),
                     str(statistic.o_coef), str(statistic.o_error),
-                    str(statistic.o_nobs)]
+                    str(statistic.o_maf), str(statistic.o_nobs)]
             line = ",".join(line)
             f.write(line + "\n")
 
