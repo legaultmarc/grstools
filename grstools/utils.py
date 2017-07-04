@@ -213,3 +213,82 @@ def regress(model, test, phenotypes):
         out["R2"] = results["MODEL"]["r_squared_adj"]
 
     return out
+
+
+def find_tag(reader, variant, window_size=100e3, maf_threshold=0.01,
+             sample_normalization=True):
+    """Find tags for the variant in the given reference genotypes."""
+
+    genotypes = reader.get_variants_in_region(
+        variant.chrom,
+        variant.pos - (window_size // 2),
+        variant.pos + (window_size // 2)
+    )
+
+    def _valid(g):
+        return (
+            (not g.variant.alleles_ambiguous() and g.maf() >= maf_threshold) or
+            g.variant == variant
+        )
+
+    genotypes = [g for g in genotypes if _valid(g)]
+
+    # There are no other variants in the region to be used as tags.
+    if len(genotypes) < 2:
+        return None
+
+    # Find the index variant.
+    idx = 0
+    while idx < len(genotypes) - 1:
+        if genotypes[idx].variant == variant:
+            break
+        else:
+            idx += 1
+
+    if genotypes[idx].variant != variant:
+        logger.warning(
+            "Could not find tags for missing variant: {}.".format(variant)
+        )
+        return None
+
+    # Create the Matrix of normalized genotypes.
+    # mat is a matrix of n_samples x n_snps
+    mat = np.vstack(tuple((i.genotypes for i in genotypes))).T
+
+    if sample_normalization:
+        # Sample normalization
+        mat = mat - np.nanmean(mat, axis=0)[np.newaxis, :]
+        mat = mat / np.nanstd(mat, axis=0)[np.newaxis, :]
+
+    else:
+        # Normalization based on binomial distribution.
+        freq = np.nanmean(mat, axis=0) / 2
+        variances = np.sqrt(2 * freq * (1 - freq))
+
+        mat = (mat - 2 * freq[np.newaxis, :]) / variances[np.newaxis, :]
+
+    # Compute the LD.
+    r = compute_ld(mat[:, idx], mat)
+    r[idx] = 0
+
+    best_tag = np.argmax(r ** 2)
+
+    return genotypes[idx], genotypes[best_tag], r[best_tag]
+
+
+def compute_ld(cur_geno, other_genotypes, r2=False):
+    # Compute the LD in block.
+    cur_nan = np.isnan(cur_geno)
+    nans = np.isnan(other_genotypes)
+
+    n = np.sum(~cur_nan) - nans.sum(axis=0)
+
+    other_genotypes[nans] = 0
+    cur_geno[cur_nan] = 0
+
+    r = np.dot(cur_geno, other_genotypes) / n
+
+    if r2:
+        return r ** 2
+    else:
+        return r
