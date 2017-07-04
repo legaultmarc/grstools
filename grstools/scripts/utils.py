@@ -78,6 +78,7 @@ class BetaSubscriber(Subscriber):
 
     def __init__(self, variant_to_expected):
         self.variant_to_expected = variant_to_expected
+        self.variant_to_remove = set()
 
     def handle(self, results):
         v = geneparse.Variant("None",
@@ -86,18 +87,25 @@ class BetaSubscriber(Subscriber):
                               [results["SNPs"]["major"],
                                results["SNPs"]["minor"]])
 
+        if results["SNPs"]["maf"] < 0.01:
+            logger.warning("Ignoring {} because it's maf ({}) is "
+                           "less than 1%".format(v, results["SNPs"]["maf"]))
+
+            self.variant_to_remove.add(v)
+
+            return
+
         # Same reference and risk alleles for expected and observed
         if self.variant_to_expected[v].e_risk == results["SNPs"]["minor"]:
             self.variant_to_expected[v].o_risk = results["SNPs"]["minor"]
             self.variant_to_expected[v].o_coef = results["SNPs"]["coef"]
-            self.variant_to_expected[v].o_maf = results["SNPs"]["maf"]
 
         else:
             self.variant_to_expected[v].o_risk = results["SNPs"]["major"]
             self.variant_to_expected[v].o_coef = -results["SNPs"]["coef"]
-            self.variant_to_expected[v].o_maf = 1 - results["SNPs"]["maf"]
 
         self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
+        self.variant_to_expected[v].o_maf = results["SNPs"]["maf"]
         self.variant_to_expected[v].o_nobs = results["MODEL"]["nobs"]
 
 
@@ -303,6 +311,10 @@ def beta_plot(args):
     f = open(args.out + ".txt", "w")
     f.write("chrom,position,alleles,risk,expected_coef,"
             "observed_coef,observed_se,observed_maf,n\n")
+
+    # Remove variants with maf less than 1%
+    for v in custom_sub.variant_to_remove:
+        del variant_to_expected[v]
 
     for variant, statistic in variant_to_expected.items():
         if statistic.o_coef is None:
