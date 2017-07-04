@@ -309,7 +309,9 @@ def beta_plot(args):
             # Plot
             xs.append(statistic.e_coef)
             ys.append(statistic.o_coef)
-            ys_error.append(statistic.o_error)
+
+            if not args.no_error_bars:
+                ys_error.append(statistic.o_error)
 
             # File
             line = [str(variant.chrom), str(variant.pos),
@@ -322,8 +324,12 @@ def beta_plot(args):
 
     f.close()
 
-    plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
-                 markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
+    if not args.no_error_bars:
+        plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
+                     markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
+    else:
+        plt.plot(xs, ys, '.', markersize=3)
+
     plt.xlabel('Expected coefficients')
     plt.ylabel('Observed coefficients')
 
@@ -489,6 +495,12 @@ def parse_args():
         type=str,
         required=True,
         choices=["linear", "logistic"]
+    )
+
+    beta_plot.add_argument(
+        "--no-error-bars",
+        help="Do not show error bars on the plot",
+        action="store_true"
     )
 
     beta_plot.add_argument(
