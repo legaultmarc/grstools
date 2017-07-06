@@ -31,6 +31,7 @@ import logging
 
 import pandas as pd
 import numpy as np
+import scipy.stats
 
 from genetest.subscribers import ResultsMemory
 from genetest.analysis import execute_formula
@@ -148,7 +149,7 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
     # Section 15.4: Relationship of hypothesis tests to confidence intervals
     # and the bootstrap.
     # TODO verify...
-    p = np.sum(betas < 0) / n_iter
+    # p = np.sum(betas < 0) / n_iter
 
     return beta, low, high, None
 
@@ -215,15 +216,28 @@ def regress(model, test, phenotypes):
     return out
 
 
-def find_tag(reader, variant, window_size=100e3, maf_threshold=0.01,
-             sample_normalization=True):
-    """Find tags for the variant in the given reference genotypes."""
+def find_tag(reader, variant, extract_reader=None, window_size=100e3,
+             maf_threshold=0.01, sample_normalization=True):
+    """Find tags for the variant in the given reference genotypes.
+
+    extract_reader can be a second geneparse reader to make sure that the
+    selected tags are also available in a given genotype dataset.
+
+    """
 
     genotypes = reader.get_variants_in_region(
         variant.chrom,
         variant.pos - (window_size // 2),
         variant.pos + (window_size // 2)
     )
+
+    # Take the subset of genotypes that are also available in the other
+    # genetic dataset if provided.
+    if extract_reader is not None:
+        genotypes = [
+            i for i in genotypes
+            if len(extract_reader.get_variant_genotypes(i.variant)) == 1
+        ]
 
     def _valid(g):
         return (
@@ -292,3 +306,37 @@ def compute_ld(cur_geno, other_genotypes, r2=False):
         return r ** 2
     else:
         return r
+
+
+def parse_kwargs(s):
+    kwargs = {}
+    for argument in s.split(","):
+        key, value = argument.strip().split("=")
+
+        if value.startswith("int:"):
+            value = int(value[4:])
+
+        elif value.startswith("float:"):
+            value = float(value[6:])
+
+        kwargs[key] = value
+
+    return kwargs
+
+
+def clopper_pearson_interval(k, n, alpha=0.01):
+    """
+    http://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval
+    alpha confidence intervals for a binomial distribution of k expected
+    successes on n trials.
+
+    Clopper Pearson intervals are a conservative estimate.
+
+    Implementation was adapted from https://gist.github.com/DavidWalz/8538435
+    but it does exactly what is expected given the Wikipedia article.
+
+    """
+    lo = scipy.stats.beta.ppf(alpha/2, k, n-k+1)
+    hi = scipy.stats.beta.ppf(1 - alpha/2, k+1, n-k)
+
+    return lo, hi

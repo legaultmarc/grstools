@@ -27,7 +27,6 @@ Compute the GRS from genotypes and a GRS file.
 # THE SOFTWARE.
 
 
-import collections
 import logging
 import argparse
 
@@ -37,10 +36,26 @@ import geneparse
 import geneparse.config
 from geneparse.core import complement_alleles
 
-from ..utils import parse_grs_file
+from ..utils import (parse_grs_file, parse_kwargs, clopper_pearson_interval,
+                     find_tag)
+
+
+DEBUG = False
 
 
 logger = logging.getLogger(__name__)
+
+
+class VariantNotInReference(KeyError):
+    pass
+
+
+class VariantDupOrMulti(Exception):
+    pass
+
+
+class CouldNotFindTag(Exception):
+    pass
 
 
 class ScoreInfo(object):
@@ -52,56 +67,238 @@ class ScoreInfo(object):
         self.risk = risk
 
 
-def compute_grs(samples, genotypes_and_info, quality_weight=True,
-                ignore_ambiguous=True):
+def _weight_unambiguous(g, info, quality_weight):
+    """Compute the GRS constribution for a variant of unambiguous strand."""
+    # Set missing genotypes to zero (equivalent to ignoring contribution
+    # from a given variant).
+    # Note: some people use the MAF instead of 0 (which is the expected
+    # risk).
+    g.genotypes[np.isnan(g.genotypes)] = 0
+
+    if g.coded == info.risk and g.reference == info.reference:
+        # No need to flip.
+        pass
+
+    elif g.coded == info.reference and g.reference == info.risk:
+        g.flip()
+
+    else:
+        raise RuntimeError(
+            "Unexpected allele mismatch during GRS computation: "
+            "{} vs {}.".format(
+                {g.coded, g.reference}, {info.risk, info.reference}
+            )
+        )
+
+    # Always use the allele with a positive effect when adding to the
+    # score.
+    if info.effect < 0:
+        cur = (2 - g.genotypes) * -info.effect
+    else:
+        cur = g.genotypes * info.effect
+
+    # Weight by quality if needed.
+    if quality_weight and isinstance(g.variant, geneparse.ImputedVariant):
+        cur *= g.variant.quality
+
+    return cur
+
+
+def _id_strand_by_frequency(g, reference):
+    # Get the variant
+    ref_g = reference.get_variant_genotypes(g.variant)
+
+    if len(ref_g) == 0:
+        raise VariantNotInReference(g)
+    elif len(ref_g) != 1:
+        raise VariantDupOrMulti(g)
+
+    assert len(ref_g) == 1
+    ref_g = ref_g[0]
+
+    # Check that the frequencies are not too close to 0.5.
+    if ref_g.maf() > 0.4 or g.maf() > 0.4:
+        return
+
+    # Compare the alleles.
+    if g.coded == ref_g.coded:
+        pass
+    else:
+        g.flip()
+        if g.coded != ref_g.coded:
+            raise RuntimeError(
+                "Unexpected allele mismatch during GRS computation."
+            )
+
+    # Compute the confidence interval over the 1000 genomes frequency.
+    assert g.coded == ref_g.coded
+
+    low, high = clopper_pearson_interval(
+        np.nansum(ref_g.genotypes),
+        2 * np.sum(~np.isnan(ref_g.genotypes))
+    )
+
+    g_coded_freq = g.coded_freq()
+
+    if DEBUG:
+        logger.debug(
+            "{} reference f({})={:.3f} ({:.3f}, {:.3f}) ;"
+            "data f({})={:.3f}."
+            "".format(
+                g.variant,
+                ref_g.coded, ref_g.coded_freq(), low, high,
+                g.coded, g_coded_freq
+            )
+        )
+
+    if low <= g_coded_freq <= high:
+        # The coded alleles match.
+        return False
+
+    elif low <= 1 - g_coded_freq <= high:
+        # We need to flip.
+        return True
+
+    else:
+        # There is a frequency mismatch.
+        return
+
+
+def _replace_by_tag(g, info, reference, reader, r2_threshold=0.6):
+    tag = find_tag(reference, g.variant, extract_reader=reader)
+    if tag is None:
+        raise CouldNotFindTag()
+
+    # Unpack the tag information.
+    # tag will be a Genotypes instance.
+    g, tag, r = tag
+
+    # Check if R2 is high enough.
+    r2 = r ** 2
+    if r2 < r2_threshold:
+        raise CouldNotFindTag(
+            "Best tag had R2={:.2f} < {:.2f}"
+            "".format(r2, r2_threshold)
+        )
+
+    # Identify the allele tagging the effect allele.
+    # Note: ScoreInfo(effect, reference, risk)
+    tag_effect = info.effect * r2
+    if info.risk == g.coded:
+        # If r is positive, then tag coded == effect
+        if r > 0:
+            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded)
+        else:
+            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference)
+
+    elif info.risk == g.reference:
+        # If r is negative, then tag coded == effect
+        if r > 0:
+            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference)
+        else:
+            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded)
+
+    else:
+        raise RuntimeError(
+            "Unexpected allele mismatch during GRS computation."
+        )
+
+    # Find the tag in the genotypes file.
+    g = reader.get_variant_genotypes(tag.variant)
+    assert len(g) == 1, "This should be guaranteed by find_tag."
+    g = g[0]
+
+    return g, tag_info, r2
+
+
+def _weight_ambiguous(g, info, quality_weight, reference, reader):
+    need_strand_flip = _id_strand_by_frequency(g, reference)
+    if need_strand_flip is True:
+        logger.info(
+            "STRAND FLIPPED: {} {} (based on frequency)".format(
+                g.variant.name, g.variant
+            )
+        )
+
+        # We flip the allele labels.
+        g.reference, g.coded = g.coded, g.reference
+        return _weight_unambiguous(g, info, quality_weight)
+
+    elif need_strand_flip is False:
+        logger.info(
+            "STRAND VALIDATED: {} {} (based on frequency)".format(
+                g.variant.name, g.variant
+            )
+        )
+
+        # We are on the right strand.
+        return _weight_unambiguous(g, info, quality_weight)
+
+    # We need to find a tag instead.
+    tag, tag_info, r2 = _replace_by_tag(g, info, reference, reader)
+    logger.info(
+        "TAG: {} {} substitutes {} {} (reference R2={:.2f})"
+        "".format(
+            tag.variant.name, tag.variant,
+            g.variant.name, g.variant,
+            r2
+        )
+    )
+
+    return _weight_unambiguous(tag, tag_info, quality_weight)
+
+
+def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
+                skip_strand_check=False, exclude_strand_ambiguous=False,
+                reference=None):
     quality_weight_warned = False
 
     n_variants_used = 0
-    grs = None
+    grs = np.zeros(len(samples))
+
     for g, info in genotypes_and_info:
-        # Note: some people use the MAF instead of 0.
-        g.genotypes[np.isnan(g.genotypes)] = 0
-
-        if g.coded == info.risk and g.reference == info.reference:
-            # No need to flip.
-            pass
-
-        elif g.coded == info.reference and g.reference == info.risk:
-            g.flip()
-
-        else:
-            raise RuntimeError(
-                "Invalid alleles should have been filtered out upstream."
-            )
-
-        # Warn if alleles are ambiguous.
-        if ignore_ambiguous and g.variant.alleles_ambiguous():
-            logger.warning(
-                "AMBIGUOUS alleles for {} (ignoring)."
-                "".format(g.variant)
-            )
-            continue
-
-        # Always use the allele with a positive effect when adding to the
-        # score.
-        if info.effect < 0:
-            cur = (2 - g.genotypes) * -info.effect
-        else:
-            cur = g.genotypes * info.effect
-
-        # Weight by quality if available.
+        # Warn that we will weight the variants by quality.
         if isinstance(g.variant, geneparse.ImputedVariant) and quality_weight:
             if not quality_weight_warned:
                 quality_weight_warned = True
-                logger.info("WEIGHTING score by genotype confidence.")
+                logger.info("WEIGHTING score by variant quality.")
 
-            cur *= g.variant.quality
+        # Dispatch to the correct weighting function wrt strand ambiguity.
+        if not g.variant.alleles_ambiguous():
+            grs += _weight_unambiguous(g, info, quality_weight)
+
+        elif skip_strand_check:
+            grs += _weight_unambiguous(g, info, quality_weight)
+
+        elif exclude_strand_ambiguous:
+            logger.info("EXCLUDING ambiguous variant {} {}."
+                        "".format(g.variant.name, g.variant))
+            continue
+
+        else:
+            try:
+                cur = _weight_ambiguous(g, info, quality_weight, reference,
+                                        reader)
+                grs += cur
+            except VariantNotInReference:
+                logger.warning(
+                    "Could not identify strand for {} {} (variant not in "
+                    "reference).".format(g.variant.name, g.variant)
+                )
+            except VariantDupOrMulti:
+                logger.warning(
+                    "Could not identify strand for {} {} (variant is a "
+                    "multiallelic or has duplicates)."
+                    "".format(g.variant.name, g.variant)
+                )
+            except CouldNotFindTag:
+                logger.warning(
+                    "EXCLUDING {} {} because impossible to identify strand or "
+                    "find a suitable tag."
+                    "".format(g.variant.name, g.variant)
+                )
 
         n_variants_used += 1
-        if grs is None:
-            grs = cur
-        else:
-            grs += cur
 
     logger.info("Computed the GRS using {} variants.".format(n_variants_used))
     return pd.DataFrame(grs, index=samples, columns=["grs"])
@@ -110,37 +307,31 @@ def compute_grs(samples, genotypes_and_info, quality_weight=True,
 def main():
     args = parse_args()
 
+    if args["reference"]:
+        reference = geneparse.parsers["plink"](args["reference"])
+    else:
+        reference = None
+
     # Parse the GRS.
-    grs = parse_grs_file(args.grs)
+    grs = parse_grs_file(args["grs"])
 
     # Extract genotypes.
-    if args.genotypes_format not in geneparse.parsers.keys():
+    if args["genotypes_format"] not in geneparse.parsers.keys():
         raise ValueError(
             "Unknown reference format '{}'. Must be a genetest compatible "
             "format ({})."
-            "".format(args.genotypes_format, list(geneparse.parsers.keys()))
+            "".format(args["genotypes_format"], list(geneparse.parsers.keys()))
         )
 
-    genotypes_kwargs = {}
-    if args.genotypes_kwargs:
-        for argument in args.genotypes_kwargs.split(","):
-            key, value = argument.strip().split("=")
-
-            if value.startswith("int:"):
-                value = int(value[4:])
-
-            elif value.startswith("float:"):
-                value = float(value[6:])
-
-            genotypes_kwargs[key] = value
-
     geneparse.config.LOG_NOT_FOUND = False
-    reader = geneparse.parsers[args.genotypes_format]
+    reader = geneparse.parsers[args["genotypes_format"]]
     reader = reader(
-        args.genotypes,
-        **genotypes_kwargs
+        args["genotypes"],
+        **parse_kwargs(args["genotypes_kwargs"])
     )
 
+    logger.info("Extracting genotypes for variants in the GRS file.")
+    # List of tuples of (genotype, info) instances
     genotypes_and_info = []
     for name, row in grs.iterrows():
         v = geneparse.Variant(
@@ -162,35 +353,68 @@ def main():
             g = reader.get_variant_genotypes(v)
 
             if len(g) == 0:
-                logger.warning("Excluding {} (no available genotypes)."
-                               "".format(v))
+                logger.warning("Excluding {} {} (no available genotypes)."
+                               "".format(name, v))
                 continue
+
             else:
                 logger.info(
-                    "Found variant {} after complementation (on the other "
-                    "strand).".format(v)
+                    "Found variant {} {} after complementation (on the other "
+                    "strand).".format(name, v)
                 )
 
         if len(g) == 1:
             genotypes_and_info.append((g[0], info))
+
         else:
             logger.warning(
-                "Excluding {} (duplicate variant or ambiguous multiallelic)"
-                "".format(v)
+                "Excluding {} {} (duplicate variant or ambiguous multiallelic)"
+                "".format(name, v)
             )
 
     computed_grs = compute_grs(
+        reader,
         reader.get_samples(),
         genotypes_and_info,
-        quality_weight=not args.ignore_genotype_quality,
-        ignore_ambiguous=not args.keep_ambiguous,
+        quality_weight=not args["ignore_genotype_quality"],
+        skip_strand_check=args["skip_strand_check"],
+        exclude_strand_ambiguous=args["exclude_strand_ambiguous"],
+        reference=reference
     )
 
-    logger.info("WRITING file containing the GRS: '{}'".format(args.out))
-    computed_grs.to_csv(args.out, header=True, index_label="sample")
+    logger.info("WRITING file containing the GRS: '{}'".format(args["out"]))
+    computed_grs.to_csv(args["out"], header=True, index_label="sample")
+
+
+def startup_log(args):
+    logger.info("grs-compute called with the following options:")
+    logger.info("\tGenotype data file: {}".format(args["genotypes"]))
+    logger.info("\tGenotype data file format: {}".format(
+        args["genotypes_format"])
+    )
+    if args["genotypes_kwargs"] is not None:
+        logger.info(
+            "\tKeyword arguments passed to the genotypes reader: {}"
+            "".format(args["genotypes_kwargs"])
+        )
+    logger.info("\tGRS file (selected variants): {}".format(args["grs"]))
+    logger.info("\tOutput filename: {}".format(args["out"]))
+    logger.info(
+        "\tVariants {} be weighted by the variant quality (if available)"
+        "".format("will not" if args["ignore_genotype_quality"] else "will")
+    )
+    if args["skip_strand_check"]:
+        logger.info("\tStrand checks will be SKIPPED and the variants will "
+                    "be assumed to be on the same strand as the GRS file.")
+    else:
+        assert args["reference"] is not None
+        logger.info("\tReference panel used for strand checks: '{}'"
+                    "".format(args["reference"]))
 
 
 def parse_args():
+    global DEBUG
+
     parser = argparse.ArgumentParser(description="Compute the risk score.")
 
     parser.add_argument(
@@ -240,10 +464,60 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--keep-ambiguous",
-        help=("Do not ignore ambiguous allele combinations (i.e. A/T and "
-              "G/C). By default, such alleles are ignored."),
+        "--skip-strand-check",
+        help=("Skips all the strand validation checks and assume that the "
+              "strand in the genotype and GRS files are the same. "
+              "This option should only be used if the variants were manually "
+              "curated. "
+              "This option is also assumed if no --reference is provided "
+              "(with a warning)."),
         action="store_true"
     )
 
-    return parser.parse_args()
+    parser.add_argument(
+        "--exclude-strand-ambiguous",
+        help="Exclude all strand ambiguous variants.",
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--reference",
+        default=None,
+        type=str,
+        help=("Plink prefix for the reference genotypes. This is used to find "
+              "tags when needed or to compute the MAF.")
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true"
+    )
+
+    args = vars(parser.parse_args())
+
+    if args["debug"]:
+        DEBUG = True
+        logger.setLevel(logging.DEBUG)
+
+    if args["exclude_strand_ambiguous"] and args["skip_strand_check"]:
+        raise ValueError(
+            "Either --exclude-strand-ambiguous to ignore variants whose "
+            "is ambiguous OR --skip-strand-check to assume that the strands "
+            "are the same between the GRS file and the genotypes file."
+        )
+
+    no_exception = (
+        args["exclude_strand_ambiguous"] is False and
+        args["skip_strand_check"] is False
+    )
+    if args["reference"] is None and no_exception:
+        raise ValueError(
+            "Can't execute strand checks because no reference panel was provided. "
+            "To run the analysis anyway, either provide a '--reference' "
+            "option, use '--skip-strand-check' or use "
+            "'--exclude-strand-ambiguous'."
+        )
+
+    startup_log(args)
+
+    return args
