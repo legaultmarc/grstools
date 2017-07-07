@@ -324,7 +324,7 @@ def parse_kwargs(s):
     return kwargs
 
 
-def clopper_pearson_interval(k, n, alpha=0.01):
+def clopper_pearson_interval(k, n, alpha=0.001):
     """
     http://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval
     alpha confidence intervals for a binomial distribution of k expected

@@ -69,11 +69,12 @@ class ScoreInfo(object):
 
 def _weight_unambiguous(g, info, quality_weight):
     """Compute the GRS constribution for a variant of unambiguous strand."""
-    # Set missing genotypes to zero (equivalent to ignoring contribution
-    # from a given variant).
-    # Note: some people use the MAF instead of 0 (which is the expected
-    # risk).
-    g.genotypes[np.isnan(g.genotypes)] = 0
+    # Weight by quality if needed.
+    if quality_weight and isinstance(g.variant, geneparse.ImputedVariant):
+        info.effect *= g.variant.quality
+
+    # "Impute" missing genotypes by setting them to the sample mean.
+    g.genotypes[np.isnan(g.genotypes)] = np.nanmean(g.genotypes)
 
     if g.coded == info.risk and g.reference == info.reference:
         # No need to flip.
@@ -96,10 +97,6 @@ def _weight_unambiguous(g, info, quality_weight):
         cur = (2 - g.genotypes) * -info.effect
     else:
         cur = g.genotypes * info.effect
-
-    # Weight by quality if needed.
-    if quality_weight and isinstance(g.variant, geneparse.ImputedVariant):
-        cur *= g.variant.quality
 
     return cur
 
@@ -153,6 +150,11 @@ def _id_strand_by_frequency(g, reference):
 
     if low <= g_coded_freq <= high:
         # The coded alleles match.
+        # First, we make a sanity check that the other allele combination
+        # would not match.
+        if low <= 1 - g_coded_freq <= high:
+            return
+
         return False
 
     elif low <= 1 - g_coded_freq <= high:
