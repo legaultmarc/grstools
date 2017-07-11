@@ -115,6 +115,11 @@ def _id_strand_by_frequency(g, reference):
 
     # Check that the frequencies are not too close to 0.5.
     if ref_g.maf() > 0.4 or g.maf() > 0.4:
+        if DEBUG:
+            logger.debug(
+                "{} MAF too close to 50% (data_maf={:.3f}, ref_maf={:.3f})"
+                "".format(g.variant, g.maf(), ref_g.maf())
+            )
         return
 
     # Compare the alleles.
