@@ -43,12 +43,16 @@ class BetaSubscriber(Subscriber):
                               [results["SNPs"]["major"],
                                results["SNPs"]["minor"]])
 
-        if results["SNPs"]["maf"] < 0.01:
+        # Variants to remove from results
+        if results["SNPs"]["coef"] is None:
+            logger.warning("No statistic for {}".format(v))
+            self.variant_to_remove.add(v)
+            return
+
+        elif results["SNPs"]["maf"] < 0.01:
             logger.warning("Ignoring {} because it's maf ({}) is "
                            "less than 1%".format(v, results["SNPs"]["maf"]))
-
             self.variant_to_remove.add(v)
-
             return
 
         # Same reference and risk alleles for expected and observed
@@ -66,11 +70,43 @@ class BetaSubscriber(Subscriber):
 
 
 def beta_plot(args):
+    # Get variants from summary stats file
+    variant_to_expected = get_summary_variants(args.summary)
+
+    # Extract variants genotypes
+    extractor = extract_variants_genotypes(
+            args.genotypes_format,
+            args.genotypes_kwargs,
+            args.genotypes_filename,
+            variant_to_expected
+        )
+
+    # Compute beta coefficients
+    results = compute_beta_coefficients(
+            args.phenotypes_filename,
+            args.phenotype,
+            args.phenotypes_sample_column,
+            args.phenotypes_separator,
+            args.covar,
+            args.test,
+            args.cpus,
+            variant_to_expected,
+            extractor
+        )
+
+    # Remove variants with no result found or with maf < 1%
+    filter_results(results, variant_to_expected)
+
+    # Create output file and plot
+    create_outputs(args.out, args.no_error_bars, results, variant_to_expected)
+
+
+def get_summary_variants(summary_filename):
     # Key:Variant instance, value: beta_tuple instance
     variant_to_expected = {}
 
     # Get variants from summary stats file
-    with open(args.summary, "r") as f:
+    with open(summary_filename, "r") as f:
         header = f.readline()
         header_to_pos = {title: pos for pos, title in enumerate(
             header.strip().split(","))}
@@ -102,17 +138,22 @@ def beta_plot(args):
                 l[header_to_pos["effect"]]
             )
 
+        return variant_to_expected
+
+
+def extract_variants_genotypes(genotypes_format, genotypes_kwargs,
+                               genotypes_filename, variant_to_expected):
     # Extract genotypes
-    if args.genotypes_format not in geneparse.parsers.keys():
+    if genotypes_format not in geneparse.parsers.keys():
         raise ValueError(
             "Unknown reference format '{}'. Must be a genetest compatible "
             "format ({})."
-            "".format(args.genotypes_format, list(geneparse.parsers.keys()))
+            "".format(genotypes_format, list(geneparse.parsers.keys()))
         )
 
-    genotypes_kwargs = {}
-    if args.genotypes_kwargs:
-        for argument in args.genotypes_kwargs.split(","):
+    genotypes_kwargs_info = {}
+    if genotypes_kwargs:
+        for argument in genotypes_kwargs.split(","):
             key, value = argument.strip().split("=")
 
             if value.startswith("int:"):
@@ -121,93 +162,98 @@ def beta_plot(args):
             elif value.startswith("float:"):
                 value = float(value[6:])
 
-            genotypes_kwargs[key] = value
+            genotypes_kwargs_info[key] = value
 
-    reader = geneparse.parsers[args.genotypes_format]
-    reader = reader(
-        args.genotypes_filename,
-        **genotypes_kwargs
-    )
+    reader = geneparse.parsers[genotypes_format]
+    reader = reader(genotypes_filename, **genotypes_kwargs_info)
 
     extractor = geneparse.Extractor(reader,
                                     variants=variant_to_expected.keys())
 
+    return extractor
+
+
+def compute_beta_coefficients(phenotypes_filename, phenotype,
+                              phenotypes_sample_column, phenotypes_separator,
+                              covar, test, nb_cpus, variant_to_expected,
+                              extractor):
     # MODELSPEC
     # Phenotype container
-    phenotypes = TextPhenotypes(args.phenotypes_filename,
-                                sample_column=args.phenotypes_sample_column,
-                                field_separator=args.phenotypes_separator)
+    phenotypes = TextPhenotypes(phenotypes_filename,
+                                sample_column=phenotypes_sample_column,
+                                field_separator=phenotypes_separator)
 
     # Test
-    if args.test == "linear":
+    if test == "linear":
         def test_specification():
-            return model_map[args.test](
+            return model_map[test](
                 condition_value_t=float("infinity")
             )
 
     else:
-        test_specification = args.test
+        test_specification = test
 
     # Covariates
     pred = [spec.SNPs]
-    if args.covar is not None:
+    if covar is not None:
         pred.extend(
-            [spec.phenotypes[c] for c in args.covar.split(",")]
+            [spec.phenotypes[c] for c in covar.split(",")]
         )
 
     # Model
     model = spec.ModelSpec(
-        outcome=spec.phenotypes[args.phenotype],
+        outcome=spec.phenotypes[phenotype],
         predictors=pred,
         test=test_specification)
 
     # Subscriber
-    custom_sub = BetaSubscriber(variant_to_expected)
+    beta_sub = BetaSubscriber(variant_to_expected)
 
     # Execution
     execute(phenotypes,
             extractor,
             model,
-            subscribers=[custom_sub], cpus=args.cpus)
+            subscribers=[beta_sub], cpus=nb_cpus)
 
+    return beta_sub
+
+
+def filter_results(beta_sub, variant_to_expected):
+    for v in beta_sub.variant_to_remove:
+        del variant_to_expected[v]
+
+
+def create_outputs(out_filename, no_error_bars, beta_sub, variant_to_expected):
     # Plot and write to file observed and expected beta coefficients
     xs = []
 
     ys = []
     ys_error = []
 
-    f = open(args.out + ".txt", "w")
+    f = open(out_filename + ".txt", "w")
     f.write("chrom,position,alleles,risk,expected_coef,"
             "observed_coef,observed_se,observed_maf,n\n")
 
-    # Remove variants with maf less than 1%
-    for v in custom_sub.variant_to_remove:
-        del variant_to_expected[v]
-
     for variant, statistic in variant_to_expected.items():
-        if statistic.o_coef is None:
-            logger.warning("No statistic for {}".format(variant))
+        # Plot
+        xs.append(statistic.e_coef)
+        ys.append(statistic.o_coef)
 
-        else:
-            # Plot
-            xs.append(statistic.e_coef)
-            ys.append(statistic.o_coef)
+        if not no_error_bars:
+            ys_error.append(statistic.o_error)
 
-            if not args.no_error_bars:
-                ys_error.append(statistic.o_error)
-
-            # File
-            line = [str(variant.chrom), str(variant.pos),
-                    "/".join(variant.alleles_set),
-                    statistic.e_risk, str(statistic.e_coef),
-                    str(statistic.o_coef), str(statistic.o_error),
-                    str(statistic.o_maf), str(statistic.o_nobs)]
-            line = ",".join(line)
-            f.write(line + "\n")
+        # File
+        line = [str(variant.chrom), str(variant.pos),
+                "/".join(variant.alleles_set),
+                statistic.e_risk, str(statistic.e_coef),
+                str(statistic.o_coef), str(statistic.o_error),
+                str(statistic.o_maf), str(statistic.o_nobs)]
+        line = ",".join(line)
+        f.write(line + "\n")
 
     f.close()
 
-    if not args.no_error_bars:
+    if not no_error_bars:
         plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
                      markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
     else:
@@ -216,4 +262,4 @@ def beta_plot(args):
     plt.xlabel('Expected coefficients')
     plt.ylabel('Observed coefficients')
 
-    plt.savefig(args.out + ".png")
+    plt.savefig(out_filename + ".png")
