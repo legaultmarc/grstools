@@ -139,7 +139,7 @@ def _id_strand_by_frequency(g, reference):
 
     if DEBUG:
         logger.debug(
-            "{} reference f({})={:.3f} ({:.3f}, {:.3f}) ;"
+            "{} reference f({})={:.3f} ({:.3f}, {:.3f}); "
             "data f({})={:.3f}."
             "".format(
                 g.variant,
@@ -237,10 +237,15 @@ def _weight_ambiguous(g, info, quality_weight, reference, reader):
         # We are on the right strand.
         return _weight_unambiguous(g, info, quality_weight)
 
+    else:
+        logger.debug(
+            "STRAND NOT VALIDATED (frequency mismatch). Trying to find a tag."
+        )
+
     # We need to find a tag instead.
     tag, tag_info, r2 = _replace_by_tag(g, info, reference, reader)
     logger.info(
-        "TAG: {} {} substitutes {} {} (reference R2={:.2f})"
+        "TAG:{}: {} substitutes SRC:{}: {} (reference R2={:.2f})"
         "".format(
             tag.variant.name, tag.variant,
             g.variant.name, g.variant,
