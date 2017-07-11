@@ -167,6 +167,7 @@ def _id_strand_by_frequency(g, reference):
 
 
 def _replace_by_tag(g, info, reference, reader, r2_threshold=0.6):
+
     tag = find_tag(reference, g.variant, extract_reader=reader)
     if tag is None:
         raise CouldNotFindTag()

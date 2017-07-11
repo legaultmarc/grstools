@@ -4,6 +4,7 @@ Test the GRS computation algorithm
 
 
 import unittest
+from pkg_resources import resource_filename
 
 import geneparse
 import geneparse.testing
@@ -208,6 +209,94 @@ class TestCompute(unittest.TestCase):
         need_strand_flip = build_grs._id_strand_by_frequency(my_g, reference)
         self.assertTrue(need_strand_flip is None)
 
+    def test_replace_by_tag(self):
+        reference = get_reference()
+
+        v = geneparse.Variant("rs35391999", 2, 85626581, "AT")
+        g = _FakeGenotypes(v)
+        info = build_grs.ScoreInfo(0.2, reference="A", risk="T")
+
+        g, tag_info, r2 = build_grs._replace_by_tag(
+            g, info, reference, reference
+        )
+
+        reference.close()
+
+        self.assertEqual(g.variant.name, "rs6419687")
+        self.assertEqual(g.variant.chrom, 2)
+        self.assertEqual(g.variant.pos, 85629817)
+        self.assertEqual(g.variant.alleles_set, {"G", "A"})
+
+        # 0.996 was computed by plink
+        self.assertAlmostEqual(r2, 0.996, places=3)
+        self.assertAlmostEqual(tag_info.effect, r2 * 0.2)
+
+        self.assertEqual(tag_info.risk, "G")  # G=T, according to plink
+
+    def test_replace_by_tag_computation_non_coded(self):
+        reference = get_reference()
+
+        v = geneparse.Variant("rs35391999", 2, 85626581, "AT")
+        g = _FakeGenotypes(v)
+        info = build_grs.ScoreInfo(0.2, reference="A", risk="T")
+
+        g, tag_info, r2 = build_grs._replace_by_tag(
+            g, info, reference, reference
+        )
+
+        raw_tag_geno = reference.get_variant_genotypes(g.variant)[0]
+
+        reference.close()
+
+        # In the file, the A alleles for both variants are coded.
+        # The risk allele is T and T=G, so we need to flip the genotype
+        # alleles for the expected computation.
+
+        grs = build_grs._weight_unambiguous(g, tag_info, False)
+        np.testing.assert_array_almost_equal(
+            grs,
+            r2 * 0.2 * (2 - raw_tag_geno.genotypes)
+        )
+
+    def test_replace_by_tag_computation_coded(self):
+        reference = get_reference()
+
+        v = geneparse.Variant("rs35391999", 2, 85626581, "AT")
+        g = _FakeGenotypes(v)
+        info = build_grs.ScoreInfo(0.2, reference="T", risk="A")
+
+        g, tag_info, r2 = build_grs._replace_by_tag(
+            g, info, reference, reference
+        )
+
+        raw_tag_geno = reference.get_variant_genotypes(g.variant)[0]
+
+        reference.close()
+
+        # In the file, the A alleles for both variants are coded.
+        # The risk allele is A and A=A, so we need to use the tag's
+        # genotype as is for the computation.
+
+        grs = build_grs._weight_unambiguous(g, tag_info, False)
+        np.testing.assert_array_almost_equal(
+            grs,
+            r2 * 0.2 * raw_tag_geno.genotypes
+        )
+
+    def test_replace_by_tag_notag(self):
+        reference = get_reference()
+
+        v = geneparse.Variant("rs12714148", 2, 85859835, "AT")
+        g = _FakeGenotypes(v)
+        info = build_grs.ScoreInfo(0.2, reference="A", risk="T")
+
+        with self.assertRaises(build_grs.CouldNotFindTag):
+            g, tag_info, r2 = build_grs._replace_by_tag(
+                g, info, reference, reference
+            )
+
+        reference.close()
+
 
 class _FakeReader(object):
     def __init__(self, d):
@@ -215,3 +304,14 @@ class _FakeReader(object):
 
     def get_variant_genotypes(self, v):
         return [self.d[v]]
+
+
+class _FakeGenotypes(object):
+    def __init__(self, variant):
+        self.variant = variant
+
+
+def get_reference():
+    return geneparse.parsers["plink"](
+        resource_filename(__name__, "data/extract_tag_test.bed")[:-4]
+    )
