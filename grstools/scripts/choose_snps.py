@@ -47,7 +47,7 @@ from geneparse.exceptions import InvalidChromosome
 
 import numpy as np
 
-from ..utils import parse_grs_file
+from ..utils import parse_grs_file, compute_ld
 
 
 debug = False
@@ -280,19 +280,6 @@ def build_genotype_matrix(cur, loci, genotypes, summary):
     return other_genotypes, retained_loci
 
 
-def compute_ld(cur_geno, other_genotypes):
-    # Compute the LD in block.
-    cur_nan = np.isnan(cur_geno)
-    nans = np.isnan(other_genotypes)
-
-    n = np.sum(~cur_nan) - nans.sum(axis=0)
-
-    other_genotypes[nans] = 0
-    cur_geno[cur_nan] = 0
-
-    return (np.dot(cur_geno, other_genotypes) / n) ** 2
-
-
 def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
                       target_n=None):
     out = []
@@ -332,7 +319,7 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
 
         # Compute the LD between all the neighbouring variants and the current
         # variant.
-        r2 = compute_ld(cur_geno, other_genotypes)
+        r2 = compute_ld(cur_geno, other_genotypes, r2=True)
 
         # Remove all the correlated variants.
         logger.debug(
