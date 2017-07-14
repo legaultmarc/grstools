@@ -11,17 +11,18 @@ from pkg_resources import resource_filename
 import pandas as pd
 
 import geneparse
-from ..scripts.utils.beta_plot import BetaTuple
-from ..scripts.utils.beta_plot import BetaSubscriber
-from ..scripts.utils.beta_plot import compute_beta_coefficients
+from ..scripts.utils.beta_plot import beta_plot as beta_plot
+# from ..scripts.utils.beta_plot import BetaTuple
+# from ..scripts.utils.beta_plot import BetaSubscriber
+# from ..scripts.utils.beta_plot import compute_beta_coefficients
 
 
 class TestCompute(unittest.TestCase):
     def test_BetaSubscriber_handle_noAlleleFlip(self):
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
-        b1 = BetaTuple("A", 0.45)
+        b1 = beta_plot.BetaTuple("A", 0.45)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
-        b2 = BetaTuple("T", -0.91)
+        b2 = beta_plot.BetaTuple("T", -0.91)
 
         variant_to_expected = {v1: b1, v2: b2}
 
@@ -45,7 +46,7 @@ class TestCompute(unittest.TestCase):
                             'maf': 0.0223}
                    }
 
-        beta_sub = BetaSubscriber(variant_to_expected)
+        beta_sub = beta_plot.BetaSubscriber(variant_to_expected)
         beta_sub.handle(result1)
         beta_sub.handle(result2)
 
@@ -62,10 +63,10 @@ class TestCompute(unittest.TestCase):
     def test_BetaSubscriber_handle_AlleleFlip(self):
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
         # flipped alleles and reversed coefficient sign of noFlip function
-        b1 = BetaTuple("G", -0.45)
+        b1 = beta_plot.BetaTuple("G", -0.45)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
         # flipped alleles and reversed coefficient sign of noFlip function
-        b2 = BetaTuple("C", 0.91)
+        b2 = beta_plot.BetaTuple("C", 0.91)
 
         variant_to_expected = {v1: b1, v2: b2}
 
@@ -89,7 +90,7 @@ class TestCompute(unittest.TestCase):
                             'maf': 0.0223}
                    }
 
-        beta_sub = BetaSubscriber(variant_to_expected)
+        beta_sub = beta_plot.BetaSubscriber(variant_to_expected)
         beta_sub.handle(result1)
         beta_sub.handle(result2)
 
@@ -147,7 +148,7 @@ class TestCompute(unittest.TestCase):
                                   row.chrom,
                                   row.pos,
                                   [row.allele1, row.allele2])
-            plink_variants[v] = BetaTuple(row.A1, row.BETA)
+            plink_variants[v] = beta_plot.BetaTuple(row.A1, row.BETA)
 
         # GENOTYPES
         reader = geneparse.parsers["plink"](
@@ -160,7 +161,7 @@ class TestCompute(unittest.TestCase):
             )
 
         # COMPUTE OBSERVED COEFFICIENTS
-        beta_sub = compute_beta_coefficients(
+        beta_sub = beta_plot.compute_beta_coefficients(
                 resource_filename(__name__, "data/pheno.csv"),
                 "pheno_val",
                 "sample",
