@@ -1,12 +1,15 @@
 import logging
 
+import scipy.stats
+import numpy as np
+import matplotlib.pyplot as plt
+
 import geneparse
 import genetest.modelspec as spec
 from genetest.phenotypes import TextPhenotypes
 from genetest.analysis import execute
 from genetest.statistics import model_map
 from genetest.subscribers import Subscriber
-import matplotlib.pyplot as plt
 
 
 logger = logging.getLogger(__name__)
@@ -14,13 +17,14 @@ logger = logging.getLogger(__name__)
 
 class BetaTuple(object):
     __slots__ = ("e_risk", "e_coef", "e_error",
-                 "o_risk", "o_coef", "o_error", "o_maf", "o_nobs")
+                 "o_risk", "o_coef", "o_error", "o_maf", "o_nobs",
+                 "valid", "message")
 
-    def __init__(self, e_risk, e_coef):
+    def __init__(self, e_risk, e_coef, e_error):
         # e:expected
         self.e_risk = e_risk
         self.e_coef = float(e_coef)
-        self.e_error = None
+        self.e_error = e_error
 
         # o:observed (computed)
         self.o_risk = None
@@ -28,6 +32,9 @@ class BetaTuple(object):
         self.o_error = None
         self.o_maf = None
         self.o_nobs = None
+
+        self.valid = False
+        self.message = None
 
 
 class BetaSubscriber(Subscriber):
@@ -46,12 +53,16 @@ class BetaSubscriber(Subscriber):
         # Variants to remove from results
         if results["SNPs"]["coef"] is None:
             logger.warning("No statistic for {}".format(v))
+            self.variant_to_expected[v].message = "No statistic for "
+            "{}".format(v)
             self.variant_to_remove.add(v)
             return
 
         elif results["SNPs"]["maf"] < 0.01:
             logger.warning("Ignoring {} because it's maf ({}) is "
                            "less than 1%".format(v, results["SNPs"]["maf"]))
+            self.variant_to_expected[v].message = "Ignoring {} because it's "
+            "maf ({}) is less than 1%".format(v, results["SNPs"]["maf"])
             self.variant_to_remove.add(v)
             return
 
@@ -67,6 +78,7 @@ class BetaSubscriber(Subscriber):
         self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
         self.variant_to_expected[v].o_maf = results["SNPs"]["maf"]
         self.variant_to_expected[v].o_nobs = results["MODEL"]["nobs"]
+        self.variant_to_expected[v].valid = True
 
 
 def beta_plot(args):
@@ -95,7 +107,7 @@ def beta_plot(args):
         )
 
     # Remove variants with no result found or with maf < 1%
-    filter_results(results, variant_to_expected)
+    filter_results(variant_to_expected)
 
     # Create output file and plot
     create_outputs(args.out, args.no_error_bars, results, variant_to_expected)
@@ -133,12 +145,23 @@ def get_summary_variants(summary_filename):
                  l[header_to_pos["risk"]]]
             )
 
+            se = get_variant_standard_error(
+                    v,
+                    l[header_to_pos["p-value"]],
+                    l[header_to_pos["effect"]]
+                )
+
             variant_to_expected[v] = BetaTuple(
                 l[header_to_pos["risk"]],
-                l[header_to_pos["effect"]]
+                l[header_to_pos["effect"]],
+                se
             )
 
         return variant_to_expected
+
+
+def get_variant_standard_error(variant, pval, effect):
+    return float(effect)/abs(scipy.stats.norm.ppf(float(pval)/2))
 
 
 def extract_variants_genotypes(genotypes_format, genotypes_kwargs,
@@ -218,48 +241,78 @@ def compute_beta_coefficients(phenotypes_filename, phenotype,
     return beta_sub
 
 
-def filter_results(beta_sub, variant_to_expected):
-    for v in beta_sub.variant_to_remove:
-        del variant_to_expected[v]
+def filter_results(variant_to_expected):
+    for variant, beta_tuple in variant_to_expected.items():
+        if not beta_tuple.valid:
+            if beta_tuple.message is None:
+                beta_tuple.message = "No genotype found for {}".format(variant)
 
 
 def create_outputs(out_filename, no_error_bars, beta_sub, variant_to_expected):
     # Plot and write to file observed and expected beta coefficients
     xs = []
+    xs_error = []
 
     ys = []
     ys_error = []
 
     f = open(out_filename + ".txt", "w")
-    f.write("chrom,position,alleles,risk,expected_coef,"
+    f.write("chrom,position,alleles,risk,expected_coef,expected_se,"
             "observed_coef,observed_se,observed_maf,n\n")
 
     for variant, statistic in variant_to_expected.items():
-        # Plot
-        xs.append(statistic.e_coef)
-        ys.append(statistic.o_coef)
+        if not statistic.valid:
+            logger.warning(statistic.message)
 
-        if not no_error_bars:
-            ys_error.append(statistic.o_error)
+        else:
+            xs.append(statistic.e_coef)
+            ys.append(statistic.o_coef)
 
-        # File
-        line = [str(variant.chrom), str(variant.pos),
-                "/".join(variant.alleles_set),
-                statistic.e_risk, str(statistic.e_coef),
-                str(statistic.o_coef), str(statistic.o_error),
-                str(statistic.o_maf), str(statistic.o_nobs)]
-        line = ",".join(line)
-        f.write(line + "\n")
+            if not no_error_bars:
+                xs_error.append(statistic.e_error)
+                ys_error.append(statistic.o_error)
+
+            # File
+            line = [str(variant.chrom), str(variant.pos),
+                    "/".join(variant.alleles_set), statistic.e_risk,
+                    str(statistic.e_coef), str(statistic.e_error),
+                    str(statistic.o_coef), str(statistic.o_error),
+                    str(statistic.o_maf),
+                    str(statistic.o_nobs)]
+
+            line = ",".join(line)
+            f.write(line + "\n")
 
     f.close()
 
+    # Plot
     if not no_error_bars:
-        plt.errorbar(xs, ys, yerr=ys_error, fmt='.', markersize=3, capsize=2,
-                     markeredgewidth=0.5, elinewidth=0.5, ecolor='black')
+        plt.errorbar(xs, ys, xerr=xs_error, yerr=ys_error,
+                     fmt='.', color='black', markersize=3, capsize=2,
+                     markeredgewidth=0.5, elinewidth=0.5, ecolor='0.7',
+                     label="coefficients")
     else:
-        plt.plot(xs, ys, '.', markersize=3)
+        plt.plot(xs, ys, '.', color='black', markersize=3,
+                 label="coefficients")
 
     plt.xlabel('Expected coefficients')
     plt.ylabel('Observed coefficients')
+
+    # Correlation
+    slope, intercept, rval, pval, std_err = scipy.stats.linregress(xs, ys)
+
+    xmin = np.min(xs)
+    xmax = np.max(xs)
+
+    x = np.linspace(xmin, xmax, 2000)
+
+    plt.plot(x, slope * x + intercept,
+             label=("observed_coef = {:.2f} expected_coef + {:.2f} "
+                    "($R^2={:.2f}$)".format(slope, intercept, rval ** 2)),
+             linewidth=0.5)
+    plt.plot(x, x, label="observed_coef = expected_coef", linestyle="--",
+             linewidth=0.5, color='blue')
+
+    plt.legend()
 
     plt.savefig(out_filename + ".png")
