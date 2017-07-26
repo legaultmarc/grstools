@@ -110,7 +110,13 @@ def beta_plot(args):
     filter_results(variant_to_expected)
 
     # Create output file and plot
-    create_outputs(args.out, args.no_error_bars, results, variant_to_expected)
+    create_outputs(
+            args.out,
+            args.svg,
+            args.no_error_bars,
+            results,
+            variant_to_expected
+        )
 
 
 def get_summary_variants(summary_filename):
@@ -248,7 +254,8 @@ def filter_results(variant_to_expected):
                 beta_tuple.message = "No genotype found for {}".format(variant)
 
 
-def create_outputs(out_filename, no_error_bars, beta_sub, variant_to_expected):
+def create_outputs(out_filename, svg_format, no_error_bars,
+                   beta_sub, variant_to_expected):
     # Plot and write to file observed and expected beta coefficients
     xs = []
     xs_error = []
@@ -315,4 +322,7 @@ def create_outputs(out_filename, no_error_bars, beta_sub, variant_to_expected):
 
     plt.legend()
 
-    plt.savefig(out_filename + ".png")
+    if svg_format:
+        plt.savefig(out_filename + ".svg")
+    else:
+        plt.savefig(out_filename + ".png", dpi=300)
