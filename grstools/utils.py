@@ -154,9 +154,12 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
     return beta, low, high, None
 
 
+# TODO remove this method.
 def _create_genetest_phenotypes(grs_filename, phenotypes_filename,
                                 phenotypes_sample_column="sample",
                                 phenotypes_separator=","):
+    logger.warning("_create_genetest_phenotypes is deprecated.")
+
     # Read the GRS.
     grs = TextPhenotypes(grs_filename, "sample", ",", "", False)
 

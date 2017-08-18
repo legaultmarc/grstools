@@ -419,6 +419,9 @@ def startup_log(args):
     if args["skip_strand_check"]:
         logger.info("\tStrand checks will be SKIPPED and the variants will "
                     "be assumed to be on the same strand as the GRS file.")
+    elif args["exclude_strand_ambiguous"]:
+        logger.info("\tVariants with ambiguous strands will be automatically "
+                    "excluded.")
     else:
         assert args["reference"] is not None
         logger.info("\tReference panel used for strand checks: '{}'"

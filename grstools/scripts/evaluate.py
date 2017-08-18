@@ -31,6 +31,7 @@ procedure.
 import os
 import argparse
 import json
+import logging
 
 import numpy as np
 import pandas as pd
@@ -39,57 +40,67 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 from genetest.statistics import model_map
+from genetest.phenotypes.dataframe import DataFrameContainer
 
 from ..utils import regress as _regress
-from ..utils import parse_computed_grs_file, _create_genetest_phenotypes
+from ..utils import parse_computed_grs_file
 
 
 plt.style.use("ggplot")
 matplotlib.rc("font", size="7")
 
 
-def _parse_phenotypes(args):
-    """Parse a phenotypes file given the arguments added by
-    _add_phenotype_arguments.
-    """
-    df = pd.read_csv(
-        args.phenotypes_filename, index_col=args.phenotypes_sample_column,
-        sep=args.phenotypes_separator
-    )
-    df.index = df.index.astype(str)
-    return df
+logger = logging.getLogger(__name__)
 
 
-def _parse_and_regress(args, formula):
-    phenotypes = _create_genetest_phenotypes(
-        args.grs_filename, args.phenotypes_filename,
-        args.phenotypes_sample_column, args.phenotypes_separator
+def _parse_data(args):
+    phenotypes = pd.read_csv(
+        args.phenotypes_filename,
+        index_col=args.phenotypes_sample_column,
+        sep=args.phenotypes_separator,
     )
-    return _regress(formula, args.test, phenotypes)
+    phenotypes.index = phenotypes.index.astype(str)
+
+    grs = parse_computed_grs_file(args.grs_filename)
+
+    return pd.merge(phenotypes, grs, left_index=True, right_index=True)
 
 
 def regress(args):
+    # Parse the GRS and phenotypes.
+    df = _parse_data(args)
+
+    # Standardize if needed.
+    if args.std_y:
+        if args.test == "logistic":
+            logger.warning(
+                "Ignoring the --std-y option for logistic regression. This "
+                "flag should only be used for linear regression."
+            )
+
+        else:
+            y = df[args.phenotype]
+            df[args.phenotype] = (y - y.mean()) / y.std()
+
     # Do the regression.
     formula = "{} ~ grs".format(args.phenotype)
-    stats = _parse_and_regress(args, formula)
+    stats = _regress(formula, args.test, DataFrameContainer(df))
 
     if args.no_plot:
         print(json.dumps(stats))
         return
 
-    # Read the files.
-    grs = parse_computed_grs_file(args.grs_filename)
-    phenotypes = _parse_phenotypes(args)
-    df = phenotypes.join(grs)
-
+    # Rename columns for plotting.
     df = df[[args.phenotype, "grs"]]
     df.columns = ("y", "grs")
 
     # Create the plot.
     if args.test == "linear":
-        return _linear_regress_plot(df, stats, args.out)
+        n = df.dropna().shape[0]
+        logger.info("Running linear regression based on {} samples.".format(n))
+        return _linear_regress_plot(df, stats, args.out, args.phenotype_label)
     if args.test == "logistic":
-        return _logistic_regress_plot(df, stats, args.out)
+        return _logistic_regress_plot(df, stats, args.out, args.phenotype_label)
     else:
         raise ValueError()
 
@@ -100,7 +111,7 @@ def _get_dummy_artist():
     )
 
 
-def _linear_regress_plot(df, stats, out):
+def _linear_regress_plot(df, stats, out, phenotype_label):
     data_marker, = plt.plot(df["grs"], df["y"], "o", markersize=0.5)
 
     xmin = df["grs"].min()
@@ -116,7 +127,7 @@ def _linear_regress_plot(df, stats, out):
     )
 
     plt.xlabel("GRS")
-    plt.ylabel("Phenotype")
+    plt.ylabel(phenotype_label)
 
     # Add extra info to the legend.
     plt.legend(
@@ -137,7 +148,7 @@ def _linear_regress_plot(df, stats, out):
         plt.savefig(out)
 
 
-def _logistic_regress_plot(df, stats, out):
+def _logistic_regress_plot(df, stats, out, phenotype_label):
     odds_ratio = np.exp(stats["beta"])
     odds_ratio_ci = [np.exp(i) for i in stats["CI"]]
 
@@ -169,7 +180,10 @@ def _logistic_regress_plot(df, stats, out):
 
     plt.boxplot(boxplot_data, showfliers=False, medianprops={"color": "black"})
 
-    plt.xlabel("Phenotype level")
+    if phenotype_label == "Phenotype":
+        phenotype_label = "Phenotype level"
+
+    plt.xlabel(phenotype_label)
     plt.xticks(range(1, len(levels) + 1), levels)
 
     plt.ylabel("GRS")
@@ -185,9 +199,7 @@ def _logistic_regress_plot(df, stats, out):
 def dichotomize_plot(args):
     """Compares differente quantiles of dichotomization."""
     # Read the files.
-    grs = parse_computed_grs_file(args.grs_filename)
-    phenotypes = _parse_phenotypes(args)
-    df = phenotypes.join(grs)
+    df = _parse_data(args)
     df["group"] = np.nan
     df["intercept"] = 1
 
@@ -266,7 +278,12 @@ def roc_curve(args):
 
     grs_names = grs.columns
 
-    phenotypes = _parse_phenotypes(args)
+    phenotypes = pd.read_csv(
+        args.phenotypes_filename,
+        index_col=args.phenotypes_sample_column,
+        sep=args.phenotypes_separator,
+    )
+    phenotypes.index = phenotypes.index.astype(str)
     df = phenotypes.join(grs)
     df = df.dropna()
 
@@ -357,6 +374,19 @@ def parse_args():
     _add_phenotype_arguments(regress_parse)
     regress_parse.add_argument("--test", type=str)
     regress_parse.add_argument("--no-plot", action="store_true")
+    regress_parse.add_argument(
+        "--std-y",
+        action="store_true",
+        help="Standardize the phenotype before the regression. This should "
+             "only be used for linear regression."
+    )
+
+    regress_parse.add_argument(
+        "--phenotype-label",
+        default="Phenotype",
+        type=str,
+        help="Label for the phenotype axis."
+    )
 
     # Dichotomize plot.
     dichotomize_parse = subparser.add_parser(
