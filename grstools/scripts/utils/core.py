@@ -32,7 +32,12 @@ import argparse
 import matplotlib
 import matplotlib.pyplot as plt
 
-from . import (histogram, quantiles, standardize, correlation, beta_plot)
+from . import (histogram,
+               quantiles,
+               standardize,
+               correlation,
+               beta_plot,
+               locus_overlap)
 
 
 plt.style.use("ggplot")
@@ -48,6 +53,7 @@ def main():
         "standardize": standardize,
         "correlation": correlation,
         "beta-plot": beta_plot,
+        "locus-overlap": locus_overlap,
     }
 
     command_handlers[args.command](args)
@@ -233,5 +239,51 @@ def parse_args():
               "Covariates should be in string form, separated by , "
               "covar1,covar2,covar3...")
     )
+
+    # Locus_overlap
+    locus_overlap = subparser.add_parser(
+            "locus-overlap",
+            help="Display variants in LD."
+    )
+
+    locus_overlap.add_argument(
+        "--variants",
+        help="File describing the variants in grs format.",
+        type=str,
+        required=True
+    )
+
+    locus_overlap.add_argument(
+        "--genotypes-filename",
+        help="File containing genotype data.",
+        type=str,
+        required=True
+    )
+
+    locus_overlap.add_argument(
+        "--genotypes-format",
+        help=("File format of the genotypes in the reference (default:"
+              "%(default)s)."),
+        default="plink"
+    )
+
+    locus_overlap.add_argument(
+        "--genotypes-kwargs",
+        help="Keyword arguments to pass to the genotype container."
+             "A string of the following format is expected: "
+             "key1=value1,key2=value2..."
+             "It is also possible to prefix the values by 'int:' or 'float:' "
+             "to cast them before passing them to the constructor.",
+        type=str,
+    )
+
+    locus_overlap.add_argument(
+        "--ld-threshold",
+        help="LD threshold. All variants in LD will be considered as "
+        "belonging to the same locus.(default:%(default)s).)",
+        default=0.05,
+        type=float
+    )
+
 
     return parser.parse_args()
