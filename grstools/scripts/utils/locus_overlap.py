@@ -229,10 +229,10 @@ def print_results(selected_groups):
     for sg in selected_groups:
         output = sg.name + "_ref.grs"
         with open(output, "w") as f:
-            f.write("name,chrom,pos,A1,A2,reference_variant,locus\n")
+            f.write("name,chrom,pos,A1,A2,locus\n")
             for idx, v in enumerate(sg.variants):
                 l = str(v.name)+","+str(v.chrom)+","+str(v.pos)+","
                 l += v.alleles[0]+","+v.alleles[1]+","
-                l += str(sg.references[idx])+","+str(sg.locus[idx])+"\n"
+                l += str(sg.locus[idx])+"\n"
 
                 f.write(l)
