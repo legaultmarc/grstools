@@ -248,7 +248,10 @@ def parse_args():
 
     locus_overlap.add_argument(
         "--variants",
-        help="File describing the variants in grs format.",
+        help="File(s) describing the variants in grs format. "
+             "The format should be name1=filename1,name2=filename2,...,"
+             "nameN=filenameN where name1,...nameN are names to identify "
+             "from which file variants come from.",
         type=str,
         required=True
     )
@@ -281,7 +284,7 @@ def parse_args():
         "--ld-threshold",
         help="LD threshold. All variants in LD will be considered as "
         "belonging to the same locus.(default:%(default)s).)",
-        default=0.05,
+        default=0.1,
         type=float
     )
 
