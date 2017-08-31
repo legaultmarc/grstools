@@ -214,6 +214,12 @@ def parse_args():
     )
 
     beta_plot.add_argument(
+        "--svg",
+        help="Use svg format for output plot (else will be .png)",
+        action="store_true"
+    )
+
+    beta_plot.add_argument(
         "--cpus",
         help=("Number of cpus to use for execution (default: "
               "number of cpus - 1 = %(default)s)."),

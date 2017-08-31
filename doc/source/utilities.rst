@@ -170,6 +170,34 @@ line to quickly assess the agreement between GRS.
 .. literalinclude:: includes/grs_utils_help.txt
     :language: none
 
+beta-plot
+++++++++++
+
+This utility takes SNPs from summary statistics (grs format) and computes the
+SNPs effect in a given population. The utility plots the correlation between
+the expected coefficients (SNPs effect in the summary statistics) and the
+observed coefficients (SNPs effect in the given population).
+
+The utility also displays the standard errors on the plot. For the expected
+coefficients, the standard errors are derived from the p-values. From the
+p-values, the z-scores are retrieved and the standard errors are obtained by
+dividing each expected coefficient by it's z-score.
+
+.. math::
+    z = \frac{\beta}{s.e.}
+
+Here is an example of the plot:
+
+.. image:: _static/images/beta_plot.png
+
+The execution also produces a text file displaying the SNPs information
+(chromosome, position, alleles, coefficients, standard errors, maf in the
+given population and n, the number of individuals used to compute each
+observed coefficient).
+
+.. literalinclude:: includes/grs_utils_beta_plot_help.txt
+    :language: none
+
 .. grs-evaluate
 .. _grs-evaluate:
 
