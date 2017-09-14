@@ -338,10 +338,10 @@ def main():
 
     geneparse.config.LOG_NOT_FOUND = False
     reader = geneparse.parsers[args["genotypes_format"]]
-    reader = reader(
-        args["genotypes"],
-        **parse_kwargs(args["genotypes_kwargs"])
-    )
+
+    kwargs = parse_kwargs(args["genotypes_kwargs"])
+    kwargs = kwargs if kwargs is not None else {}
+    reader = reader(args["genotypes"], kwargs)
 
     logger.info("Extracting genotypes for variants in the GRS file.")
     # List of tuples of (genotype, info) instances
