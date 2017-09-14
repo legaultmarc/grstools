@@ -312,6 +312,9 @@ def compute_ld(cur_geno, other_genotypes, r2=False):
 
 
 def parse_kwargs(s):
+    if s is None:
+        return None
+
     kwargs = {}
     for argument in s.split(","):
         key, value = argument.strip().split("=")
