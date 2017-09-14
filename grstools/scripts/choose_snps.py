@@ -378,7 +378,7 @@ def parse_args():
         help=("LD threshold for the clumping step. All variants in LD with "
               "variants in the GRS are excluded iteratively (default "
               "%(default)s)."),
-        default=0.05,
+        default=0.15,
         type=float
     )
 
@@ -387,8 +387,8 @@ def parse_args():
         help=("Size of the LD window used to find correlated variants. "
               "Making this window smaller will make the execution faster but "
               "increases the chance of missing correlated variants "
-              "(default 500kb)."),
-        default=int(500e3),
+              "(default 1Mb)."),
+        default=int(1e6),
         type=int
     )
 
