@@ -341,7 +341,7 @@ def main():
 
     kwargs = parse_kwargs(args["genotypes_kwargs"])
     kwargs = kwargs if kwargs is not None else {}
-    reader = reader(args["genotypes"], kwargs)
+    reader = reader(args["genotypes"], **kwargs)
 
     logger.info("Extracting genotypes for variants in the GRS file.")
     # List of tuples of (genotype, info) instances
