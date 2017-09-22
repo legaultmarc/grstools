@@ -293,23 +293,29 @@ def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
                 cur = _weight_ambiguous(g, info, quality_weight, reference,
                                         reader)
                 grs += cur
+
             except VariantNotInReference:
                 logger.warning(
                     "Could not identify strand for {} {} (variant not in "
                     "reference).".format(g.variant.name, g.variant)
                 )
+                continue
+
             except VariantDupOrMulti:
                 logger.warning(
                     "Could not identify strand for {} {} (variant is a "
                     "multiallelic or has duplicates)."
                     "".format(g.variant.name, g.variant)
                 )
+                continue
+
             except CouldNotFindTag:
                 logger.warning(
                     "EXCLUDING {} {} because impossible to identify strand or "
                     "find a suitable tag."
                     "".format(g.variant.name, g.variant)
                 )
+                continue
 
         n_variants_used += 1
 
