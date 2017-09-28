@@ -145,7 +145,10 @@ def _linear_regress_plot(df, stats, out, phenotype_label):
     if out is None:
         plt.show()
     else:
-        plt.savefig(out)
+        if out.endswith("png"):
+            plt.savefig(out, dpi=500)
+        else:
+            plt.savefig(out)
 
 
 def _logistic_regress_plot(df, stats, out, phenotype_label):
@@ -193,7 +196,10 @@ def _logistic_regress_plot(df, stats, out, phenotype_label):
     if out is None:
         plt.show()
     else:
-        plt.savefig(out)
+        if out.endswith("png"):
+            plt.savefig(out, dpi=500)
+        else:
+            plt.savefig(out)
 
 
 def dichotomize_plot(args):
