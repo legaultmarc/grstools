@@ -1,3 +1,4 @@
+from .annotate_nearest_gene import annotate_nearest_gene
 from .histogram import histogram
 from .quantiles import quantiles
 from .standardize import standardize

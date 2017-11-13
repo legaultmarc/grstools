@@ -32,7 +32,8 @@ import argparse
 import matplotlib
 import matplotlib.pyplot as plt
 
-from . import (histogram, quantiles, standardize, correlation, beta_plot)
+from . import (histogram, quantiles, standardize, correlation, beta_plot,
+               annotate_nearest_gene)
 
 
 plt.style.use("ggplot")
@@ -48,6 +49,7 @@ def main():
         "standardize": standardize,
         "correlation": correlation,
         "beta-plot": beta_plot,
+        "annotate-nearest-gene": annotate_nearest_gene,
     }
 
     command_handlers[args.command](args)
@@ -226,6 +228,23 @@ def parse_args():
         help=("Covariates other than the SNPs from summary stats. "
               "Covariates should be in string form, separated by , "
               "covar1,covar2,covar3...")
+    )
+
+    # annotate_nearest_gene
+    annotate_nearest_gene = subparser.add_parser(
+        "annotate-nearest-gene",
+        help="Annotate a GRS with the nearest gene for each SNP. "
+             "This script relies on an external gene annotation file such "
+             "as the GTF file provided by Ensembl.",
+        parents=[parent],
+    )
+
+    annotate_nearest_gene.add_argument(
+        "--gene-reference-gtf",
+        help="Gene annotation file. The script was tested with "
+             "ftp://ftp.ensembl.org/pub/grch37/update/gtf/homo_sapiens/Homo_sapiens.GRCh37.87.gtf.gz",
+        type=str,
+        required=True
     )
 
     return parser.parse_args()

@@ -44,7 +44,7 @@ class BetaSubscriber(Subscriber):
                                results["SNPs"]["minor"]])
 
         if results["SNPs"]["maf"] < 0.01:
-            logger.warning("Ignoring {} because it's maf ({}) is "
+            logger.warning("Ignoring {} because its maf ({}) is "
                            "less than 1%".format(v, results["SNPs"]["maf"]))
 
             self.variant_to_remove.add(v)
@@ -159,7 +159,8 @@ def beta_plot(args):
     model = spec.ModelSpec(
         outcome=spec.phenotypes[args.phenotype],
         predictors=pred,
-        test=test_specification)
+        test=test_specification
+    )
 
     # Subscriber
     custom_sub = BetaSubscriber(variant_to_expected)
@@ -216,4 +217,4 @@ def beta_plot(args):
     plt.xlabel('Expected coefficients')
     plt.ylabel('Observed coefficients')
 
-    plt.savefig(args.out + ".png")
+    plt.savefig(args.out + ".png", dpi=500)
