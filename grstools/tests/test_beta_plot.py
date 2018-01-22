@@ -19,9 +19,9 @@ from ..scripts.utils.beta_plot import compute_beta_coefficients
 class TestCompute(unittest.TestCase):
     def test_BetaSubscriber_handle_noAlleleFlip(self):
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
-        b1 = BetaTuple("A", 0.45)
+        b1 = BetaTuple("A", 0.45, None)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
-        b2 = BetaTuple("T", -0.91)
+        b2 = BetaTuple("T", -0.91, None)
 
         variant_to_expected = {v1: b1, v2: b2}
 
@@ -62,10 +62,10 @@ class TestCompute(unittest.TestCase):
     def test_BetaSubscriber_handle_AlleleFlip(self):
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
         # flipped alleles and reversed coefficient sign of noFlip function
-        b1 = BetaTuple("G", -0.45)
+        b1 = BetaTuple("G", -0.45, None)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
         # flipped alleles and reversed coefficient sign of noFlip function
-        b2 = BetaTuple("C", 0.91)
+        b2 = BetaTuple("C", 0.91, None)
 
         variant_to_expected = {v1: b1, v2: b2}
 
@@ -111,28 +111,28 @@ class TestCompute(unittest.TestCase):
         # GET VARIANTS
         # Load variants from plink association results file
         assoc_df = pd.read_csv(
-                resource_filename(__name__,
-                                  "data/plink_association_results.linear"),
-                delim_whitespace=True
-            )
+            resource_filename(__name__,
+                              "data/plink_association_results.linear"),
+            delim_whitespace=True
+        )
 
         # Load variants from plink bim file
         bim_df = pd.read_csv(
-                resource_filename(__name__, "data/extract_tag_test.bim"),
-                sep="\t",
-                names=["chrom", "id", "posCM", "pos", "allele1", "allele2"]
-            )
+            resource_filename(__name__, "data/extract_tag_test.bim"),
+            sep="\t",
+            names=["chrom", "id", "posCM", "pos", "allele1", "allele2"]
+        )
         # Remove variants with mising allele info from bim
         bim_df = bim_df[bim_df.allele1 != "0"]
 
         # Join dataframes
         df = pd.merge(
-                bim_df,
-                assoc_df,
-                left_on=["chrom", "pos"],
-                right_on=["CHR", "BP"],
-                how="inner"
-            )
+            bim_df,
+            assoc_df,
+            left_on=["chrom", "pos"],
+            right_on=["CHR", "BP"],
+            how="inner"
+        )
 
         # Sort variants according to p-value
         df = df.sort_values("P")
@@ -147,30 +147,30 @@ class TestCompute(unittest.TestCase):
                                   row.chrom,
                                   row.pos,
                                   [row.allele1, row.allele2])
-            plink_variants[v] = BetaTuple(row.A1, row.BETA)
+            plink_variants[v] = BetaTuple(row.A1, row.BETA, None)
 
         # GENOTYPES
         reader = geneparse.parsers["plink"](
-                resource_filename(__name__, "data/extract_tag_test")
-            )
+            resource_filename(__name__, "data/extract_tag_test")
+        )
 
         extractor = geneparse.Extractor(
-                reader,
-                variants=plink_variants.keys()
-            )
+            reader,
+            variants=plink_variants.keys()
+        )
 
         # COMPUTE OBSERVED COEFFICIENTS
         beta_sub = compute_beta_coefficients(
-                resource_filename(__name__, "data/pheno.csv"),
-                "pheno_val",
-                "sample",
-                " ",
-                None,
-                "linear",
-                max(cpu_count()-1, 1),
-                plink_variants,
-                extractor
-            )
+            resource_filename(__name__, "data/pheno.csv"),
+            "pheno_val",
+            "sample",
+            " ",
+            None,
+            "linear",
+            max(cpu_count() - 1, 1),
+            plink_variants,
+            extractor
+        )
 
         reader.close()
 
