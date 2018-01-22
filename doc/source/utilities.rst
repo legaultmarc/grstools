@@ -173,15 +173,15 @@ line to quickly assess the agreement between GRS.
 beta-plot
 ++++++++++
 
-This utility takes SNPs from summary statistics (grs format) and computes the
-SNPs effect in a given population. The utility plots the correlation between
-the expected coefficients (SNPs effect in the summary statistics) and the
-observed coefficients (SNPs effect in the given population).
+This utility compares the effect of variants between a summary statistics file
+in the GRS format and regression results using the user's data. The goal is
+to ensure that the reported effect sizes are compatible and that there are no
+large or systematic discrepencies that could indicate a population or strand
+mismatch.
 
-The utility also displays the standard errors on the plot. For the expected
-coefficients, the standard errors are derived from the p-values. From the
-p-values, the z-scores are retrieved and the standard errors are obtained by
-dividing each expected coefficient by it's z-score.
+The utility also displays the standard errors on the plot. For the error of the
+expected coefficients, the standard errors are derived from the p-values and
+effect sizes.
 
 .. math::
     z = \frac{\beta}{s.e.}
