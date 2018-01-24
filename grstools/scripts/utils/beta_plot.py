@@ -16,8 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class BetaTuple(object):
+    """Data structure to hold information about the variants that are 
+    compared.
+
+    """
     __slots__ = ("e_risk", "e_coef", "e_error",
-                 "o_risk", "o_coef", "o_error", "o_maf", "o_nobs",
+                 "o_coef", "o_error", "o_maf", "o_nobs",
                  "valid", "message")
 
     def __init__(self, e_risk, e_coef, e_error):
@@ -27,7 +31,6 @@ class BetaTuple(object):
         self.e_error = e_error
 
         # o:observed (computed)
-        self.o_risk = None
         self.o_coef = None
         self.o_error = None
         self.o_maf = None
@@ -38,47 +41,55 @@ class BetaTuple(object):
 
 
 class BetaSubscriber(Subscriber):
-
+    """Genetest subscriber. """
     def __init__(self, variant_to_expected):
         self.variant_to_expected = variant_to_expected
-        self.variant_to_remove = set()
+        self.variants_to_remove = set()
 
     def handle(self, results):
-        v = geneparse.Variant("None",
-                              results["SNPs"]["chrom"],
-                              results["SNPs"]["pos"],
-                              [results["SNPs"]["major"],
-                               results["SNPs"]["minor"]])
+        v = geneparse.Variant(
+            "None",
+            results["SNPs"]["chrom"],
+            results["SNPs"]["pos"],
+            [results["SNPs"]["major"], results["SNPs"]["minor"]]
+        )
+
+        # Get the variant in the information dictionary.
+        info = self.variant_to_expected[v]
 
         # Variants to remove from results
         if results["SNPs"]["coef"] is None:
-            logger.warning("No statistic for {}".format(v))
-            self.variant_to_expected[v].message = "No statistic for "
-            "{}".format(v)
-            self.variant_to_remove.add(v)
+            info.message = "No statistic for {}".format(v)
+            logger.warning(info.message)
+            self.variants_to_remove.add(v)
             return
 
         elif results["SNPs"]["maf"] < 0.01:
-            logger.warning("Ignoring {} because it's maf ({}) is "
-                           "less than 1%".format(v, results["SNPs"]["maf"]))
-            self.variant_to_expected[v].message = "Ignoring {} because it's "
-            "maf ({}) is less than 1%".format(v, results["SNPs"]["maf"])
+            info.message = (
+                "Ignoring {} because its maf ({}) is less than 1%."
+                "".format(v, results["SNPs"]["maf"])
+            )
+            logger.warning(info.message)
             self.variant_to_remove.add(v)
             return
 
         # Same reference and risk alleles for expected and observed
-        if self.variant_to_expected[v].e_risk == results["SNPs"]["minor"]:
-            self.variant_to_expected[v].o_risk = results["SNPs"]["minor"]
-            self.variant_to_expected[v].o_coef = results["SNPs"]["coef"]
+        if info.e_risk == results["SNPs"]["minor"]:
+            info.o_coef = results["SNPs"]["coef"]
+
+        elif info.e_risk == results["SNPs"]["major"]:
+            # Flip the coefficient as it is expressed wrt the wrong allele.
+            info.o_coef = -results["SNPs"]["coef"]
 
         else:
-            self.variant_to_expected[v].o_risk = results["SNPs"]["major"]
-            self.variant_to_expected[v].o_coef = -results["SNPs"]["coef"]
+            raise ValueError(
+                "Unexpected allele {} for {}.".format(info.e_risk, v)
+            )
 
-        self.variant_to_expected[v].o_error = results["SNPs"]["std_err"]
-        self.variant_to_expected[v].o_maf = results["SNPs"]["maf"]
-        self.variant_to_expected[v].o_nobs = results["MODEL"]["nobs"]
-        self.variant_to_expected[v].valid = True
+        info.o_error = results["SNPs"]["std_err"]
+        info.o_maf = results["SNPs"]["maf"]
+        info.o_nobs = results["MODEL"]["nobs"]
+        info.valid = True
 
 
 def beta_plot(args):
@@ -87,39 +98,43 @@ def beta_plot(args):
 
     # Extract variants genotypes
     extractor = extract_variants_genotypes(
-            args.genotypes_format,
-            args.genotypes_kwargs,
-            args.genotypes_filename,
-            variant_to_expected
-        )
+        args.genotypes_format,
+        args.genotypes_kwargs,
+        args.genotypes_filename,
+        variant_to_expected
+    )
 
     # Compute beta coefficients
     results = compute_beta_coefficients(
-            args.phenotypes_filename,
-            args.phenotype,
-            args.phenotypes_sample_column,
-            args.phenotypes_separator,
-            args.covar,
-            args.test,
-            args.cpus,
-            variant_to_expected,
-            extractor
-        )
+        args.phenotypes_filename,
+        args.phenotype,
+        args.phenotypes_sample_column,
+        args.phenotypes_separator,
+        args.covar,
+        args.test,
+        args.cpus,
+        variant_to_expected,
+        extractor
+    )
 
     # Remove variants with no result found or with maf < 1%
     filter_results(variant_to_expected)
 
     # Create output file and plot
     create_outputs(
-            args.out,
-            args.svg,
-            args.no_error_bars,
-            results,
-            variant_to_expected
-        )
+        args.out,
+        args.svg,
+        args.no_error_bars,
+        results,
+        variant_to_expected
+    )
 
 
 def get_summary_variants(summary_filename):
+    """Read a summary statistics file in GRS format returning a dict of
+    Variant to BetaTuple.
+
+    """
     # Key:Variant instance, value: beta_tuple instance
     variant_to_expected = {}
 
@@ -152,10 +167,10 @@ def get_summary_variants(summary_filename):
             )
 
             se = get_variant_standard_error(
-                    v,
-                    l[header_to_pos["p-value"]],
-                    l[header_to_pos["effect"]]
-                )
+                v,
+                l[header_to_pos["p-value"]],
+                l[header_to_pos["effect"]]
+            )
 
             variant_to_expected[v] = BetaTuple(
                 l[header_to_pos["risk"]],
@@ -167,7 +182,7 @@ def get_summary_variants(summary_filename):
 
 
 def get_variant_standard_error(variant, pval, effect):
-    return float(effect)/abs(scipy.stats.norm.ppf(float(pval)/2))
+    return effect / abs(scipy.stats.norm.ppf(pval / 2.0))
 
 
 def extract_variants_genotypes(genotypes_format, genotypes_kwargs,
