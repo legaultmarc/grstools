@@ -104,6 +104,21 @@ class Row(object):
 
 
 def region_query(index, variant, padding):
+    """Return the index of the elements defining the genomic window of size
+        'padding' around the Variant's position.
+
+    Args:
+        index (dict): Dict of chromosomes to sorted list of positions. The
+            positions correspond to all the variants with available summary
+            statistics.
+        variant (Variant): The currently considered variant.
+        padding (int): The size of the genomic window.
+
+    Returns:
+        tuple[int, int]: The **index** of the elements defining the window
+            boundaries.
+
+    """
     index = index[variant.chrom]
     left = bisect.bisect(index, variant.pos - padding // 2)
     right = bisect.bisect(index, variant.pos + padding // 2)
@@ -132,6 +147,31 @@ def _parse_region(s):
 def read_summary_statistics(filename, p_threshold, sep=",",
                             keep_ambiguous=False, region=None,
                             exclude_region=None):
+    """Read summary statistics file.
+
+    Args:
+        filename (str): Summary statistics (.grs) file name.
+        p_threshold (float): Minimum p-value for inclusion.
+        sep (str): File column delimiter.
+        keep_ambiguous (bool): Flag to keep ambiguous (A/T or G/C) variants.
+        region (str): Genomic region of the form chr3:12345-12355. If a region
+            is provided, only variants in the region will be KEPT.
+        exclude_region (str): Genomic region to exclude (see above for
+            details).
+
+    Returns:
+        tuple<collections.OrderedDict, collections.defaultdict>: The first
+            return value is an OrderedDict representing the summary statistics
+            file and the second is an index.
+
+        For the summary statistics, the keys are Variant instances and the
+        values are Row instances containing information like the risk alleles,
+        effect sizes and p-values.
+
+        The index is a dict of chromosome to variants sorted by position used
+        to find available variants quickly.
+
+    """
     if region is not None:
         region = _parse_region(region)
 
@@ -207,6 +247,33 @@ def read_summary_statistics(filename, p_threshold, sep=",",
 
 
 def extract_genotypes(filename, summary, maf_threshold):
+    """Extract genotypes from a plink file (most likely reference panel).
+
+    These genotypes are used for LD computations by the greedy_pick_clump
+    algorithm.
+
+    Args:
+        filename (str): The path to the plink prefix
+            (`example`{.bed,.bim,.fam}).
+        summary (Dict[Variant, Row]): Information from the summary statistics
+            file. Row contains fields like effect, reference, risk, p_value,
+            etc.
+        maf_threshold (float): Skip variants with a MAF under the provided
+            threshold. The information from the summary statistics file
+            is used and if it is unavailable, the MAF is computed from the
+            reference panel.
+
+    Returns:
+        Dict[Variant, np.array]: The dict will contain the variants from the
+            'summary' dict that could be found in the provided plink file.
+            **The np.array will be a numpy vector of sample-standardized
+            genotypes.**
+
+    A warning will be displayed if no genotype data is available. If that is
+    the case, the variant will be excluded (i.e. not selected for inclusion in
+    the GRS).
+
+    """
     genotypes = {}
 
     # Extract the genotypes for all the variants in the summary.
@@ -214,9 +281,8 @@ def extract_genotypes(filename, summary, maf_threshold):
 
     for variant, stats in summary.items():
         # Check if MAF is already known.
-        if stats.maf is not None:
-            if stats.maf < maf_threshold:
-                continue
+        if stats.maf is not None and stats.maf < maf_threshold:
+            continue
 
         ref_geno = reference.get_variant_genotypes(variant)
 
@@ -248,8 +314,18 @@ def extract_genotypes(filename, summary, maf_threshold):
 def build_genotype_matrix(cur, loci, genotypes, summary):
     """Build the genotype matrix of neighbouring variants.
 
-    This will return a tuple containing the genotype matrix and a list of
-    variant objects corresponding to the columns of the matrix.
+    Args:
+        cur (Variant): The Variant currently being considered.
+        loci (List[Variant]): List of variants in a genomic window around cur.
+        genotypes (Dict[Variant, np.array]): Genotype for variants contained
+            in the reference panel.
+        summary (Dict[Variant, Row]): Information on the variants that have
+            not been selected yet.
+
+    Returns:
+        Tuple[np.array, List[Variant]]: The tuple containes a genotype matrix
+        of size n_samples x n_variants and a list of variants corresponding to
+        the columns of the genotype matrix.
 
     """
     other_genotypes = []
@@ -282,6 +358,33 @@ def build_genotype_matrix(cur, loci, genotypes, summary):
 
 def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
                       target_n=None):
+    """Greedy algorithm to select SNPs for inclusion in the GRS.
+
+    Args:
+        summary (Dict[Variant, Row]): Dict representation of the summary
+            statistics file containing Variants as keys and their information
+            as values.
+        genotypes (Dict[Variant, np.array]): Individual level standardized
+            genotypes from a reference panel for LD computation.
+        index (Dict[str, List[Variant]): The keys are the chromosomes and the
+            values are lists of position-sorted variants from the summary
+            statistics file. This is used to lookup variants by region when
+            selecting blocks of possibly correlated variants.
+        ld_threshold (float): Maximum allowed LD between variants included in
+            the GRS. Large values could lead to the inclusion of correlated
+            variants in the GRS whereas small values could discard independant
+            variants because of spurious correlation.
+        ld_window_size (float): When LD-clumping variants, neighbouring
+            variants in a genomic window are selected. This is the size of
+            that window. Larger window sizes are safer but slower.
+        target_n (int): Number of variants to stop the selection routine. This
+            can be used if only the top N SNPs should be used to define the
+            GRS.
+
+    Returns:
+        List[Row]: Variants selected by the algorithm.
+
+    """
     out = []
 
     # Extract the positions from the index to comply with the bisect API.
@@ -306,6 +409,9 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
 
         # Do a region query in the index to get neighbouring variants.
         left, right = region_query(index_positions, cur, ld_window_size)
+
+        # We got the indices from index_positions (which correspond with
+        # index). So we can get the Variant instances in 'index'.
         loci = index[cur.chrom][left:right]
 
         # Extract genotypes.

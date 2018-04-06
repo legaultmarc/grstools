@@ -280,9 +280,11 @@ def find_tag(reader, variant, extract_reader=None, window_size=100e3,
     else:
         # Normalization based on binomial distribution.
         freq = np.nanmean(mat, axis=0) / 2
-        variances = np.sqrt(2 * freq * (1 - freq))
+        variances = 2 * freq * (1 - freq)
 
-        mat = (mat - 2 * freq[np.newaxis, :]) / variances[np.newaxis, :]
+        mat = (
+            (mat - 2 * freq[np.newaxis, :]) / np.sqrt(variances[np.newaxis, :])
+        )
 
     # Compute the LD.
     r = compute_ld(mat[:, idx], mat)
@@ -294,14 +296,25 @@ def find_tag(reader, variant, extract_reader=None, window_size=100e3,
 
 
 def compute_ld(cur_geno, other_genotypes, r2=False):
-    # Compute the LD in block.
-    cur_nan = np.isnan(cur_geno)
-    nans = np.isnan(other_genotypes)
+    """Compute LD between a genotype vector and a genotype matrix.
 
-    n = np.sum(~cur_nan) - nans.sum(axis=0)
+    Args:
+        cur_geno (np.array): A vector of standardized genotypes.
+        other_genotypes (np.array): A matrix of n_samples x n_variants of other
+            standardized genotypes.
 
-    other_genotypes[nans] = 0
-    cur_geno[cur_nan] = 0
+    """
+    n_samples = cur_geno.shape[0]
+    assert n_samples == other_genotypes.shape[0]
+
+    # Get the number of samples per SNP
+    n = (
+        ~np.isnan(cur_geno.reshape(n_samples, 1)) * ~np.isnan(other_genotypes)
+    ).sum(axis=0)
+
+    # Replace NaNs by zeros.
+    cur_geno = np.nan_to_num(cur_geno)
+    other_genotypes = np.nan_to_num(other_genotypes)
 
     r = np.dot(cur_geno, other_genotypes) / n
 
