@@ -541,7 +541,7 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
             if _in_region(variant, *exclude_region):
                 log.record_excluded(
                     variant, "REGION_EXCLUSION_FILTER",
-                    "{} in {}".format(variant, region)
+                    "{} in {}".format(variant, exclude_region)
                 )
                 continue
 
