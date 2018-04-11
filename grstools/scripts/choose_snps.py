@@ -896,7 +896,7 @@ def parse_args():
 
     parser.add_argument(
         "--region",
-        help=("Only consider variants located within a genomic region. "
+        help=("Only consider variants located WITHIN a genomic region. "
               "The expected format is 'chrCHR:START-END'. For example: "
               "'chr1:12345-22345'."),
         default=None,
@@ -914,7 +914,7 @@ def parse_args():
 
     parser.add_argument(
         "--exclude-ambiguous-alleles",
-        help="Do not filter out ambiguous alleles (e.g. G/C or A/T)",
+        help="Exclude variants with ambiguous alleles (e.g. G/C or A/T)",
         action="store_true"
     )
 
