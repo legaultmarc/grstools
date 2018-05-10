@@ -59,12 +59,13 @@ class CouldNotFindTag(Exception):
 
 
 class ScoreInfo(object):
-    __slots__ = ("effect", "reference", "risk")
+    __slots__ = ("effect", "reference", "risk", "se")
 
-    def __init__(self, effect, reference, risk):
+    def __init__(self, effect, reference, risk, se=None):
         self.effect = effect
         self.reference = reference
         self.risk = risk
+        self.se = se
 
 
 def _weight_unambiguous(g, info, quality_weight):
@@ -190,21 +191,21 @@ def _replace_by_tag(g, info, reference, reader, r2_threshold=0.6):
         )
 
     # Identify the allele tagging the effect allele.
-    # Note: ScoreInfo(effect, reference, risk)
+    # Note: ScoreInfo(effect, reference, risk, se)
     tag_effect = info.effect * r2
     if info.risk == g.coded:
         # If r is positive, then tag coded == effect
         if r > 0:
-            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded)
+            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded, info.se)
         else:
-            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference)
+            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference, info.se)
 
     elif info.risk == g.reference:
         # If r is negative, then tag coded == effect
         if r > 0:
-            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference)
+            tag_info = ScoreInfo(tag_effect, tag.coded, tag.reference, info.se)
         else:
-            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded)
+            tag_info = ScoreInfo(tag_effect, tag.reference, tag.coded, info.se)
 
     else:
         raise RuntimeError(
@@ -263,11 +264,12 @@ def _weight_ambiguous(g, info, quality_weight, reference, reader):
 
 def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
                 skip_strand_check=False, exclude_strand_ambiguous=False,
-                reference=None):
+                reference=None, precision_weighting=False):
     quality_weight_warned = False
 
     n_variants_used = 0
     grs = np.zeros(len(samples))
+    total_precision_weights = 0  # Used only if precision_weighting is True.
 
     for g, info in genotypes_and_info:
         # Warn that we will weight the variants by quality.
@@ -277,11 +279,17 @@ def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
                 logger.info("WEIGHTING score by variant quality.")
 
         # Dispatch to the correct weighting function wrt strand ambiguity.
+        variant_contributions = None
+
         if not g.variant.alleles_ambiguous():
-            grs += _weight_unambiguous(g, info, quality_weight)
+            variant_contributions = _weight_unambiguous(
+                g, info, quality_weight
+            )
 
         elif skip_strand_check:
-            grs += _weight_unambiguous(g, info, quality_weight)
+            variant_contributions = _weight_unambiguous(
+                g, info, quality_weight
+            )
 
         elif exclude_strand_ambiguous:
             logger.info("EXCLUDING ambiguous variant {} {}."
@@ -290,9 +298,9 @@ def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
 
         else:
             try:
-                cur = _weight_ambiguous(g, info, quality_weight, reference,
-                                        reader)
-                grs += cur
+                variant_contributions = _weight_ambiguous(
+                    g, info, quality_weight, reference, reader
+                )
 
             except VariantNotInReference:
                 logger.warning(
@@ -317,7 +325,20 @@ def compute_grs(reader, samples, genotypes_and_info, quality_weight=True,
                 )
                 continue
 
+        # Add the variant contribution to the GRS while weighting for precision
+        # if required.
+        if precision_weighting:
+            w = info.se ** -2  # Inverse of the sampling variance.
+            total_precision_weights += w
+            grs += w * variant_contributions
+        else:
+            grs += variant_contributions
+
         n_variants_used += 1
+
+    # At the end, we need to normalize the precision weights if needed.
+    if precision_weighting:
+        grs /= total_precision_weights
 
     logger.info("Computed the GRS using {} variants.".format(n_variants_used))
     return pd.DataFrame(grs, index=samples, columns=["grs"])
@@ -333,6 +354,12 @@ def main():
 
     # Parse the GRS.
     grs = parse_grs_file(args["grs"])
+
+    # If the user asked for precision weighting, we need to make sure that the
+    # se is available.
+    if args["precision_weighting"] and ("se" not in grs.columns):
+        raise ValueError("--precision-weighting was required, but the 'se' "
+                         "column was not found in the GRS file.")
 
     # Extract genotypes.
     if args["genotypes_format"] not in geneparse.parsers.keys():
@@ -358,7 +385,7 @@ def main():
         )
 
         info = ScoreInfo(
-            row.effect, row.reference, row.risk
+            row.effect, row.reference, row.risk, row.get("se")
         )
 
         # Get the genotype.
@@ -398,7 +425,8 @@ def main():
         quality_weight=not args["ignore_genotype_quality"],
         skip_strand_check=args["skip_strand_check"],
         exclude_strand_ambiguous=args["exclude_strand_ambiguous"],
-        reference=reference
+        reference=reference,
+        precision_weighting=args["precision_weighting"],
     )
 
     logger.info("WRITING file containing the GRS: '{}'".format(args["out"]))
@@ -432,6 +460,10 @@ def startup_log(args):
         assert args["reference"] is not None
         logger.info("\tReference panel used for strand checks: '{}'"
                     "".format(args["reference"]))
+
+    if args["precision_weighting"]:
+        logger.info("\tWeighting variants by the precision of their effect "
+                    "estimate.")
 
 
 def parse_args():
@@ -493,6 +525,13 @@ def parse_args():
               "curated. "
               "This option is also assumed if no --reference is provided "
               "(with a warning)."),
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--precision-weighting",
+        help="Weight the contribution of the variants by the precision of "
+             "the beta estimates (requires and 'se' column in the GRS file).",
         action="store_true"
     )
 

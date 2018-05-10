@@ -68,6 +68,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
 
     Optional columns are:
         - maf
+        - se (coefficient standard error)
         - p-value is optional if used to compute the GRS only.
 
     Returns:
@@ -84,6 +85,9 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
 
     if "p-value" in df.columns:
         cols.append("p-value")
+
+    if "se" in df.columns:
+        cols.append("se")
 
     # This will raise a KeyError if needed.
     df = df[cols]

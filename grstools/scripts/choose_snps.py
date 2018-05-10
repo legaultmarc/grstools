@@ -41,7 +41,6 @@ import argparse
 import logging
 import bisect
 import pickle
-import datetime
 import time
 import os
 import csv
@@ -357,10 +356,10 @@ class SNPSelectionLog(object):
 
 class Row(object):
     __slots__ = ("name", "chrom", "pos", "reference", "risk", "p_value",
-                 "effect", "maf")
+                 "effect", "maf", "se")
 
     def __init__(self, name, chrom, pos, reference, risk, p_value, effect,
-                 maf=None):
+                 maf=None, se=None):
         """The row of a GRS file."""
         self.name = name
         self.chrom = chrom
@@ -373,8 +372,13 @@ class Row(object):
 
     def write_header(self, f):
         f.write("name,chrom,pos,reference,risk,p-value,effect")
+
         if self.maf is not None:
             f.write(",maf")
+
+        if self.se is not None:
+            f.write(",se")
+
         f.write("\n")
 
     @property
@@ -386,6 +390,9 @@ class Row(object):
 
         if self.maf is not None:
             fields.append(self.maf)
+
+        if self.se is not None:
+            fields.append(self.se)
 
         return fields
 
@@ -555,6 +562,9 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
 
         if "maf" in info.index:
             row_args.append(info.maf)
+
+        if "se" in info.index:
+            row_args.append(info.se)
 
         row = Row(*row_args)
         summary.append((variant, row))
