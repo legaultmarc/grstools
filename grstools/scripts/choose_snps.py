@@ -547,7 +547,7 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
 
         ambiguous = variant.alleles_ambiguous()
         if ambiguous and exclude_ambiguous:
-            log.record_excluded("AMBIGUOUS_ALLELES_FILTER", variant)
+            log.record_excluded(variant, "AMBIGUOUS_ALLELES_FILTER")
             continue
 
         row_args = [info["name"], info.chrom, info.pos, info.reference,
