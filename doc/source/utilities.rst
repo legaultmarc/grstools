@@ -170,6 +170,34 @@ line to quickly assess the agreement between GRS.
 .. literalinclude:: includes/grs_utils_help.txt
     :language: none
 
+beta-plot
+++++++++++
+
+This utility compares the effect of variants between a summary statistics file
+in the GRS format and regression results using the user's data. The goal is
+to ensure that the reported effect sizes are compatible and that there are no
+large or systematic discrepencies that could indicate a population or strand
+mismatch.
+
+The utility also displays the standard errors on the plot. For the error of the
+expected coefficients, the standard errors are derived from the p-values and
+effect sizes.
+
+.. math::
+    z = \frac{\beta}{s.e.}
+
+Here is an example of the plot:
+
+.. image:: _static/images/beta_plot.png
+
+The execution also produces a text file displaying the SNPs information
+(chromosome, position, alleles, coefficients, standard errors, maf in the
+given population and n, the number of individuals used to compute each
+observed coefficient).
+
+.. literalinclude:: includes/grs_utils_beta_plot_help.txt
+    :language: none
+
 .. grs-evaluate
 .. _grs-evaluate:
 
