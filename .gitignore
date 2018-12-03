@@ -8,3 +8,4 @@ doc/source/includes/*_help.txt
 dist
 build
 grstools/version.py
+.mypy_cache
