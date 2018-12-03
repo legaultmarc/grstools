@@ -102,11 +102,46 @@ def _weight_unambiguous(g, info, quality_weight):
 
 
 def _id_strand_by_frequency(g, reference):
+    """Identifies strand based on allele frequency.
+
+    This function validates the strand from observed genotypes and a reference
+    panel. It compares the allele frequencies based on a Clopper Pearson
+    confidence interval from the refrence frequencies. If the computed interval
+    does not include 0.5 and includes the observed frequency, we consider the
+    strand to be validated and False is returned (need to flip = False).
+
+    If the complementary frequency falls in the confidence interval, the strand
+    is considered to be validated but the alleles need to be flipped (need to
+    flip = True is returned).
+
+    If the strand can't be validated based on the frequency, None is returned.
+
+    The VariantNotInReference exception is raised if the variant can't be found
+    in the reference panel.
+
+    The VariantDupOrMulti exception is raised if more than one reference
+    genotypes are returned by geneparse when queried with the observed
+    Variant instance.
+
+    Args:
+        g (Genotype): The observed genotypes
+        reference (geneparse.core.GenotypesReader): An initialized geneparse
+            reader to reference panel genotypes.
+
+    Returns:
+        bool or None: If the alleles could be identified based on the binomial
+            confidence interval, the return value will be True if we need to
+            flip the alleles and False otherwise. If the alleles could not
+            be identified, the return value will be None
+
+    """
+
     # Get the variant
     ref_g = reference.get_variant_genotypes(g.variant)
 
     if len(ref_g) == 0:
         raise VariantNotInReference(g)
+
     elif len(ref_g) != 1:
         raise VariantDupOrMulti(g)
 
@@ -125,6 +160,7 @@ def _id_strand_by_frequency(g, reference):
     # Compare the alleles.
     if g.coded == ref_g.coded:
         pass
+
     else:
         g.flip()
         if g.coded != ref_g.coded:
@@ -132,9 +168,9 @@ def _id_strand_by_frequency(g, reference):
                 "Unexpected allele mismatch during GRS computation."
             )
 
-    # Compute the confidence interval over the 1000 genomes frequency.
     assert g.coded == ref_g.coded
 
+    # Compute the confidence interval over the reference frequency.
     low, high = clopper_pearson_interval(
         np.nansum(ref_g.genotypes),
         2 * np.sum(~np.isnan(ref_g.genotypes))

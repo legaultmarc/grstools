@@ -18,6 +18,7 @@ class TestCompute(unittest.TestCase):
         # _weight_ambiguous(g, info, quality_weight):
         # Geno: reference: G / coded: T
         # Stats: risk: T
+        # *No need to flip*
         v1 = geneparse.Variant("rs12345", 1, 123, "GT")
         g1 = geneparse.Genotypes(
             variant=v1,
@@ -31,9 +32,12 @@ class TestCompute(unittest.TestCase):
 
         # Geno: reference: C / coded: A
         # Stats: risk: C
+        # *Need to flip*
         v2 = geneparse.Variant("rs98174", 1, 456, "CA")
         g2 = geneparse.Genotypes(
             variant=v2,
+            # For the GRS, we will use:
+            #                   NA,     0, 1, 2, 2, 0, 1, NA,     2, NA
             genotypes=np.array([np.nan, 2, 1, 0, 0, 2, 1, np.nan, 0, np.nan]),
             reference="C",
             coded="A",
@@ -42,20 +46,24 @@ class TestCompute(unittest.TestCase):
         info2 = build_grs.ScoreInfo(0.2, reference="A", risk="C")
         mean2 = np.nanmean(g2.genotypes)
 
+        assert g1.genotypes.shape[0] == g2.genotypes.shape[0]
+
+        # When computing GRS, missing genotypes are counted as the expected
+        # value of the risk allele.
         expected = np.array([
             0 + (2 - mean2) * info2.effect,
-            1 * info1.effect,
-            mean1 * info1.effect + info2.effect,
-            info1.effect + 2 * info2.effect,
-            2 * info2.effect,
-            info1.effect,
-            info2.effect,
+            1 * info1.effect + 0,
+            mean1 * info1.effect + 1 * info2.effect,
+            1 * info1.effect + 2 * info2.effect,
+            0 + 2 * info2.effect,
+            1 * info1.effect + 0,
+            0 + info2.effect,
             2 * info1.effect + (2 - mean2) * info2.effect,
             mean1 * info1.effect + 2 * info2.effect,
             2 * info1.effect + (2 - mean2) * info2.effect
         ])
 
-        grs = np.zeros(10)
+        grs = np.zeros(g1.genotypes.shape[0])
         grs += build_grs._weight_unambiguous(g1, info1, False)
         grs += build_grs._weight_unambiguous(g2, info2, False)
 
@@ -133,6 +141,16 @@ class TestCompute(unittest.TestCase):
         observed += build_grs._weight_unambiguous(g2, info2, True)
 
         np.testing.assert_array_almost_equal(expected, observed)
+
+    def test_weight_unambiguous_bad_alleles(self):
+        v1 = geneparse.Variant("testing", 1, 12345, "AG")
+        g1 = geneparse.testing.simulate_genotypes_for_variant(
+            v1, "A", 0.2, 1000, call_rate=0.98
+        )
+        info1 = build_grs.ScoreInfo(0.3, reference="T", risk="A")
+
+        with self.assertRaises(RuntimeError):
+            build_grs._weight_unambiguous(g1, info1, True)
 
     def test_id_strand_frequency_noflip(self):
         my_v = geneparse.Variant("rs12345", 1, 1234151, "GC")

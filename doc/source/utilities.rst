@@ -25,16 +25,23 @@ number of effect alleles carried by individual `i` at variant `j`.
     swapped accordingly. This ensures that contributions to the GRS are always
     positive.
 
-If the IMPUTE2 format is used to hold the genotype information, the variants
-are further weighted by the INFO score as a form of genotype confidence
-weighting:
+.. note::
+   For missing genotypes, the mean dosage with respect to the effect allele is
+   used when computing the variant's contribution. Another intuitive way of
+   handling this case would have been to set the contribution to 0, but doing
+   so is a stronger claim than using the mean, especially for variants with a
+   MAF close to 0.5.
+
+If supported imputation data formats are used to hold the genotype information,
+the variants are further weighted by the INFO score as a form of global
+genotype confidence weighting:
 
 .. math::
     GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij}  \cdot info_j
 
-.. todo::
-    Eventually, we will weight variant as soon as there is some genotype
-    quality metric (e.g. in a VCF file).
+.. note::
+   At this point, few data formats are supported. This is dependant on
+   the use of the "ImputedVariant" class in the geneparse reader.
 
 .. literalinclude:: includes/grs_compute_help.txt
     :language: none
