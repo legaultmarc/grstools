@@ -27,12 +27,14 @@ Utilities to manage files.
 # THE SOFTWARE.
 
 
+import sqlite3
 import logging
 
 import pandas as pd
 import numpy as np
 import scipy.stats
 
+import geneparse.utils
 from genetest.subscribers import ResultsMemory
 from genetest.analysis import execute_formula
 from genetest.phenotypes.text import TextPhenotypes
@@ -154,7 +156,6 @@ def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
     return beta, low, high, None
 
 
-# TODO remove this method.
 def _create_genetest_phenotypes(grs_filename, phenotypes_filename,
                                 phenotypes_sample_column="sample",
                                 phenotypes_separator=","):
@@ -246,6 +247,7 @@ def find_tag(reader, variant, extract_reader=None, window_size=100e3,
             if len(extract_reader.get_variant_genotypes(i.variant)) == 1
         ]
 
+    # Filter suitable tags i.e. unambiguous and common enough.
     def _valid(g):
         return (
             (not g.variant.alleles_ambiguous() and g.maf() >= maf_threshold) or
@@ -263,69 +265,24 @@ def find_tag(reader, variant, extract_reader=None, window_size=100e3,
     while idx < len(genotypes) - 1:
         if genotypes[idx].variant == variant:
             break
+
         else:
             idx += 1
 
     if genotypes[idx].variant != variant:
         logger.warning(
-            "Could not find tags for missing variant: {}.".format(variant)
+            "Could not find tags for variant: {} (not in reference panel)."
+            "".format(variant)
         )
         return None
 
-    # Create the Matrix of normalized genotypes.
-    # mat is a matrix of n_samples x n_snps
-    mat = np.vstack(tuple((i.genotypes for i in genotypes))).T
-
-    if sample_normalization:
-        # Sample normalization
-        mat = mat - np.nanmean(mat, axis=0)[np.newaxis, :]
-        mat = mat / np.nanstd(mat, axis=0)[np.newaxis, :]
-
-    else:
-        # Normalization based on binomial distribution.
-        freq = np.nanmean(mat, axis=0) / 2
-        variances = 2 * freq * (1 - freq)
-
-        mat = (
-            (mat - 2 * freq[np.newaxis, :]) / np.sqrt(variances[np.newaxis, :])
-        )
-
     # Compute the LD.
-    r = compute_ld(mat[:, idx], mat)
+    r = geneparse.utils.compute_ld(genotypes[idx], genotypes, r2=False).values
     r[idx] = 0
 
     best_tag = np.argmax(r ** 2)
 
     return genotypes[idx], genotypes[best_tag], r[best_tag]
-
-
-def compute_ld(cur_geno, other_genotypes, r2=False):
-    """Compute LD between a genotype vector and a genotype matrix.
-
-    Args:
-        cur_geno (np.array): A vector of standardized genotypes.
-        other_genotypes (np.array): A matrix of n_samples x n_variants of other
-            standardized genotypes.
-
-    """
-    n_samples = cur_geno.shape[0]
-    assert n_samples == other_genotypes.shape[0]
-
-    # Get the number of samples per SNP
-    n = (
-        ~np.isnan(cur_geno.reshape(n_samples, 1)) * ~np.isnan(other_genotypes)
-    ).sum(axis=0)
-
-    # Replace NaNs by zeros.
-    cur_geno = np.nan_to_num(cur_geno)
-    other_genotypes = np.nan_to_num(other_genotypes)
-
-    r = np.dot(cur_geno, other_genotypes) / n
-
-    if r2:
-        return r ** 2
-    else:
-        return r
 
 
 def parse_kwargs(s):
@@ -363,3 +320,105 @@ def clopper_pearson_interval(k, n, alpha=0.001):
     hi = scipy.stats.beta.ppf(1 - alpha/2, k+1, n-k)
 
     return lo, hi
+
+
+class InMemoryGenotypeExtractor(object):
+    """Like geneparse's Extractor class but that loads everything in memory.
+
+    Note that this class does nothing to the geneparse reader after reading.
+    It is the caller's responsibility manage (close) the reader.
+
+    """
+    def __init__(self, parser, variants):
+        self.variants = variants
+        self.rowid_to_genotypes = {}
+        self.variant_to_genotypes = {}
+
+        self._not_found = set()
+        self._dups_or_multi = set()
+
+        self.con = sqlite3.connect(":memory:")
+        self.cur = self.con.cursor()
+
+        self._load_variant_in_memory(parser)
+
+    def close(self):
+        self.con.close()
+
+    def _load_variant_in_memory(self, parser):
+        self.cur.execute(
+            "CREATE TABLE variants ("
+            "  chrom TEXT, "
+            "  pos INT"
+            ")"
+        )
+
+        self.cur.execute(
+            "CREATE INDEX _locus_idx ON variants (chrom, pos)"
+        )
+
+        self.con.commit()
+
+        MAX_BUFFER_SIZE = 2000
+        buffer = []
+        rowid = 1
+        for v in self.variants:
+            # Get the variant from the parser.
+            g = parser.get_variant_genotypes(v)
+
+            if len(g) == 0:
+                self._not_found.add(v)
+
+            elif len(g) > 1:
+                self._dups_or_multi.add(v)
+
+            # If found and unique, add it to the cache and the database.
+            else:
+                g = g[0]
+                buffer.append((rowid, v.chrom.name, v.pos))
+                self.rowid_to_genotypes[rowid] = g
+                self.variant_to_genotypes[v] = g
+                rowid += 1
+
+            # Push to the database if buffer is full.
+            if len(buffer) >= MAX_BUFFER_SIZE:
+                self._do_inserts(buffer)
+                buffer = []
+
+        # Push the remaining data if needed.
+        if len(buffer) > 0:
+            self._do_inserts(buffer)
+
+        self.con.commit()
+
+    def _do_inserts(self, buffer):
+        self.cur.execute("BEGIN TRANSACTION")
+        for row in buffer:
+            self.cur.execute(
+                "INSERT INTO variants (rowid, chrom, pos) VALUES (?, ?, ?)",
+                row
+            )
+        self.cur.execute("COMMIT")
+
+    def get_variant_genotypes(self, v):
+        if v in self.variant_to_genotypes:
+            return [self.variant_to_genotypes[v], ]
+        else:
+            return []
+
+    def get_variants_in_region(self, chrom, left, right):
+        if isinstance(chrom, geneparse.Chromosome):
+            chrom = chrom.name
+
+        self.cur.execute(
+            "SELECT rowid FROM variants "
+            "WHERE "
+            "  chrom = ? AND "
+            "  pos >= ? AND "
+            "  pos <= ?",
+            (chrom, left, right)
+        )
+
+        for row in self.cur:
+            rowid = row[0]
+            yield self.rowid_to_genotypes[rowid]

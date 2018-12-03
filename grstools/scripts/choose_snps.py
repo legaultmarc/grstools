@@ -7,9 +7,6 @@ Method 1:
     Remove all SNPs in LD.
     Loop until p-value threshold or n variants is reached.
 
-Ideas:
-    - Skew GRS towards only biomarker increasing or decreasing alleles.
-
 """
 
 # This file is part of grstools.
@@ -39,20 +36,17 @@ Ideas:
 
 import argparse
 import logging
-import bisect
 import pickle
-import datetime
 import time
 import os
 import csv
 import collections
 
 import geneparse
+import geneparse.utils
 from geneparse.exceptions import InvalidChromosome
 
-import numpy as np
-
-from ..utils import parse_grs_file, compute_ld
+from ..utils import parse_grs_file, InMemoryGenotypeExtractor
 from ..version import grstools_version
 
 
@@ -60,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 class ParameterObject(object):
+    """Abstract class of argument validators."""
     @staticmethod
     def valid(o):
         raise NotImplementedError()
@@ -78,14 +73,36 @@ class Filename(ParameterObject):
 
 
 class Region(ParameterObject):
-    @staticmethod
-    def valid(o):
+    @classmethod
+    def valid(cls, o):
         """Validate that a str is of the form chrXX:START-END."""
         try:
-            _parse_region(o)
+            cls._parse_region(o)
         except ValueError:
             return False
         return True
+
+    @staticmethod
+    def _parse_region(s):
+        message = "Expected format for region is: 'chr1:12345-22345'."
+        if not hasattr(s, "startswith"):
+            raise ValueError(message)
+
+        if not s.startswith("chr"):
+            raise ValueError(message)
+
+        s = s[3:]
+        try:
+            chrom, tail = s.split(":")
+            start, end = [int(i) for i in tail.split("-")]
+        except:
+            raise ValueError(message)
+
+        # Flip start and end position if needed.
+        if start > end:
+            start, end = end, start
+
+        return chrom, start, end
 
 
 class Some(ParameterObject):
@@ -323,13 +340,18 @@ class SNPSelectionLog(object):
             self.logger.debug("\tVARIANT {} ALONE".format(variant))
             return
 
+        other_loci = [g.variant for g in other_loci]
+
         start = variant.pos - self.parameters["LD_WINDOW_SIZE"] // 2
         end = variant.pos + self.parameters["LD_WINDOW_SIZE"] // 2
 
         self.logger.debug(
             "\tLD_REGION {} to {} ({}: {}-{}) [{} candidates]"
-            "".format(other_loci[0], other_loci[-1], variant.chrom,
-                      start, end, len(other_loci))
+            "".format(
+                other_loci[0],
+                other_loci[-1],
+                variant.chrom,
+                start, end, len(other_loci))
         )
 
         blocks_directory = self.parameters["OUTPUT_PREFIX"] + ".ld_blocks"
@@ -402,74 +424,6 @@ class Row(object):
         f.write("\n")
 
 
-def region_query(index, variant, padding):
-    """Return the index of the elements defining the genomic window of size
-        'padding' around the Variant's position.
-
-    Args:
-        index (dict): Dict of chromosomes to sorted list of positions. The
-            positions correspond to all the variants with available summary
-            statistics.
-        variant (Variant): The currently considered variant.
-        padding (int): The size of the genomic window.
-
-    Returns:
-        tuple[int, int]: The **index** of the elements defining the window
-            boundaries.
-
-    """
-    index = index[variant.chrom]
-    left = bisect.bisect(index, variant.pos - padding // 2)
-    right = bisect.bisect(index, variant.pos + padding // 2)
-    return left, right
-
-
-def _parse_region(s):
-    message = "Expected format for region is: 'chr1:12345-22345'."
-    if not hasattr(s, "startswith"):
-        raise ValueError(message)
-
-    if not s.startswith("chr"):
-        raise ValueError(message)
-
-    s = s[3:]
-    try:
-        chrom, tail = s.split(":")
-        start, end = [int(i) for i in tail.split("-")]
-    except:
-        raise ValueError(message)
-
-    # Flip start and end position if needed.
-    if start > end:
-        start, end = end, start
-
-    return chrom, start, end
-
-
-def build_index(variants):
-    """Build an index for genomic range queries.
-
-    Args:
-        Iterable[Variant]: An iterable of variant instances.
-
-    Returns:
-        dict[str, List[Variant]]: A dict mapping chromosomes to lists of
-            available Variants sorted by position.
-
-    """
-    index = collections.defaultdict(list)
-
-    # Start by separating by chromosome.
-    for v in variants:
-        index[v.chrom].append(v)
-
-    # Sort by position
-    for chrom in index.keys():
-        index[chrom] = sorted(index[chrom], key=lambda x: x.pos)
-
-    return index
-
-
 def read_summary_statistics(filename, p_threshold, log, sep=",",
                             exclude_ambiguous=False, region=None,
                             exclude_region=None):
@@ -493,10 +447,10 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
 
     """
     if region is not None:
-        region = _parse_region(region)
+        region = Region._parse_region(region)
 
     if exclude_region is not None:
-        exclude_region = _parse_region(exclude_region)
+        exclude_region = Region._parse_region(exclude_region)
 
     # Variant to stats orderedict (but constructed as a list).
     summary = []
@@ -550,6 +504,16 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
             log.record_excluded(variant, "AMBIGUOUS_ALLELES_FILTER")
             continue
 
+        if "maf" in info.index:
+            if info.maf <= log.parameters["MAF_THRESHOLD"]:
+                log.record_excluded(
+                    variant,
+                    "MAF_FILTER",
+                    "MAF recorded as {:g} in summary statistics file"
+                    "".format()
+                )
+                continue
+
         row_args = [info["name"], info.chrom, info.pos, info.reference,
                     info.risk, info["p-value"], info.effect]
 
@@ -567,154 +531,15 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
     return summary
 
 
-def extract_genotypes(filename, summary, maf_threshold, log):
-    """Extract genotypes from a plink file (most likely reference panel).
-
-    These genotypes are used for LD computations by the greedy_pick_clump
-    algorithm.
-
-    Args:
-        filename (str): The path to the plink prefix
-            (`example`{.bed,.bim,.fam}).
-        summary (Dict[Variant, Row]): Information from the summary statistics
-            file. Row contains fields like effect, reference, risk, p_value,
-            etc.
-        maf_threshold (float): Skip variants with a MAF under the provided
-            threshold. The information from the summary statistics file
-            is used and if it is unavailable, the MAF is computed from the
-            reference panel.
-        log (SNPSelectionLog): An object used to keep track of the selection
-            process.
-
-    Returns:
-        Dict[Variant, np.array]: The dict will contain the variants from the
-            'summary' dict that could be found in the provided plink file.
-            **The np.array will be a numpy vector of sample-standardized
-            genotypes.**
-
-    A warning will be displayed if no genotype data is available. If that is
-    the case, the variant will be excluded (i.e. not selected for inclusion in
-    the GRS).
-
-    """
-    genotypes = {}
-
-    # Extract the genotypes for all the variants in the summary.
-    reference = geneparse.parsers["plink"](filename)
-
-    for variant, stats in summary.items():
-        # Check if MAF is already known.
-        if stats.maf is not None and stats.maf < maf_threshold:
-            log.record_excluded(
-                variant,
-                "MAF_FILTER",
-                "MAF recorded as {:g} in summary statistics file"
-                "".format(stats.maf)
-            )
-            continue
-
-        ref_geno = reference.get_variant_genotypes(variant)
-
-        if len(ref_geno) == 0:
-            pass
-
-        elif len(ref_geno) == 1:
-            g = ref_geno[0].genotypes
-
-            # Compute the maf.
-            mean = np.nanmean(g)
-            maf = mean / 2
-            stats.maf = min(maf, 1 - maf)
-
-            if maf >= maf_threshold:
-                # Standardize.
-                g = (g - mean) / np.nanstd(g)
-                genotypes[variant] = g
-
-            else:
-                log.record_excluded(
-                    variant,
-                    "MAF_FILTER",
-                    "MAF from reference panel is {:g}".format(maf)
-                )
-
-        else:
-            log.record_excluded(
-                variant,
-                "DUP_OR_MULTIALLELIC_IN_REFERENCE_PANEL"
-            )
-
-    log.logger.info(
-        "Extracted {} variants from the reference (variants missing from the "
-        "reference and variants filtered based on MAF will be logged)"
-        "".format(len(genotypes))
-    )
-
-    return genotypes
-
-
-def build_genotype_matrix(cur, loci, genotypes, summary):
-    """Build the genotype matrix of neighbouring variants.
-
-    Args:
-        cur (Variant): The Variant currently being considered.
-        loci (List[Variant]): List of variants in a genomic window around cur.
-        genotypes (Dict[Variant, np.array]): Genotype for variants contained
-            in the reference panel.
-        summary (Dict[Variant, Row]): Information on the variants that have
-            not been selected yet.
-
-    Returns:
-        Tuple[np.array, List[Variant]]: The tuple containes a genotype matrix
-        of size n_samples x n_variants and a list of variants corresponding to
-        the columns of the genotype matrix.
-
-    """
-    # other_genotypes is a genotype matrix
-    # retained_loci is a list of variants
-    other_genotypes = []
-    retained_loci = []
-
-    for locus in loci:
-        # Get the genotypes in the reference.
-        geno = genotypes[locus]
-
-        if locus == cur:
-            continue
-
-        # Variant was already excluded.
-        if locus not in summary:
-            continue
-
-        other_genotypes.append(geno)
-        retained_loci.append(locus)
-
-    other_genotypes = np.array(other_genotypes).T
-
-    return other_genotypes, retained_loci
-
-
-def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
-                      log, target_n=None):
+def greedy_pick_clump(summary, genotypes, log):
     """Greedy algorithm to select SNPs for inclusion in the GRS.
 
     Args:
         summary (Dict[Variant, Row]): Dict representation of the summary
             statistics file containing Variants as keys and their information
             as values.
-        genotypes (Dict[Variant, np.array]): Individual level standardized
-            genotypes from a reference panel for LD computation.
-        index (Dict[str, List[Variant]): The keys are the chromosomes and the
-            values are lists of position-sorted variants from the summary
-            statistics file. This is used to lookup variants by region when
-            selecting blocks of possibly correlated variants.
-        ld_threshold (float): Maximum allowed LD between variants included in
-            the GRS. Large values could lead to the inclusion of correlated
-            variants in the GRS whereas small values could discard independant
-            variants because of spurious correlation.
-        ld_window_size (float): When LD-clumping variants, neighbouring
-            variants in a genomic window are selected. This is the size of
-            that window. Larger window sizes are safer but slower.
+        genotypes (geneparse.core.GenotypesReader): Genotypes from a reference
+            panel for LD computation.
         log (SNPSelectionLog): A class to manage state of the selection
             process.
         target_n (int): Number of variants to stop the selection routine. This
@@ -728,106 +553,124 @@ def greedy_pick_clump(summary, genotypes, index, ld_threshold, ld_window_size,
     log.logger.info("Starting the greedy variant selection.")
 
     out = []
-
-    # Extract the positions from the index to comply with the bisect API.
-    index_positions = {}
-    for chrom in index:
-        index_positions[chrom] = [i.pos for i in index[chrom]]
-
-    excluded_variants = log.get_excluded_variants()
-
     while len(summary) > 0:
+
         # One of the stop conditions is target n, which we check.
+        target_n = log.parameters.get("TARGET_N")
         if target_n is not None and len(out) >= target_n:
             log.logger.info("Target number of variants reached.")
             break
 
         # Get the next best variant.
         cur, info = summary.popitem(last=False)
-        cur_geno = None  # Reset the genotypes.
 
-        # If the variant was excluded, continue.
-        if cur in excluded_variants:
-            continue
+        # Check if current variant is a suitable candidate.
+        g = genotypes.get_variant_genotypes(cur)
 
-        # Make sure genotypes are available and log for debugging the current
-        # variant.
-        available_genotypes = cur in genotypes
+        if variant_is_good_to_keep(cur, g, log):
+            log.record_included(cur)
+            out.append(info)
 
-        if not available_genotypes:
-            if log.parameters["EXCLUDE_NO_REFERENCE"]:
-                log.record_excluded(cur, "NOT_IN_REFERENCE_PANEL")
-                continue
+            # If the variant is in the reference, we do LD pruning.
+            if len(g) == 1:
+                summary = ld_prune(summary, g[0], genotypes, log)
 
-            else:
-                log.record_included_special(
-                    cur,
-                    "NOT_IN_REFERENCE",
-                    "Variant {} was absent from the reference panel but was "
-                    "still included in the GRS. It is important to validate "
-                    "that it is not correlated with other included variants."
-                    "".format(cur)
-                )
-
-        else:
-            cur_geno = genotypes[cur]
-
-        # Add it to the GRS.
-        log.record_included(cur)
-        out.append(info)
-
-        if cur_geno is None:
-            continue
-
-        else:
-            # We specifically check for MAF close to 0.5 and ambiguous alleles
-            # to warn the user.
-            assert info.maf <= 0.5
-            if cur.alleles_ambiguous() and info.maf >= 0.4:
-                log.record_included_special(
-                    cur,
-                    "INCLUDED_AMBIGUOUS",
-                    "Variant {} was included in the GRS and could be strand "
-                    "ambiguous (alleles: {} and MAF: {:.2f})"
-                    "".format(cur, cur.alleles, info.maf)
-                )
-
-        # Do a region query in the index to get neighbouring variants.
-        left, right = region_query(index_positions, cur, ld_window_size)
-
-        # We got the indices from index_positions (which correspond with
-        # index). So we can get the Variant instances in 'index'.
-        loci = index[cur.chrom][left:right]
-
-        # Extract genotypes.
-        other_genotypes, retained_loci = build_genotype_matrix(
-            cur, loci, genotypes, summary
-        )
-
-        if len(retained_loci) == 0:
-            r2 = []
-        else:
-            # Compute the LD between all the neighbouring variants and the
-            # current variant.
-            r2 = compute_ld(cur_geno, other_genotypes, r2=True)
-
-        log.record_ld_block(cur, retained_loci, r2)
-
-        # Remove all the correlated variants.
-        for variant, pair_ld in zip(retained_loci, r2):
-            if pair_ld > ld_threshold:
-                log.record_excluded(
-                    variant,
-                    "LD_CLUMPED",
-                    "LD with {} {} is {:g}".format(
-                        cur.name if cur.name else "",
-                        cur, pair_ld
-                    )
-                )
-
-                del summary[variant]
+        # Otherwise, just go to the next one (exclusion will be noted by the
+        # predicate function).
 
     return out
+
+
+def variant_is_good_to_keep(cur, g, log):
+    """Check that the currently selected variant is good to keep.
+
+    When this is called, it's after parsing the summary statistics and when
+    looking up variants in the reference panel.
+
+    This means that the filters being applied are:
+
+    - Reference panel MAF filtering
+    - Filters based on the availability in reference panels
+    - Filters based on multiallelic / duplicates in reference panel
+
+    """
+    # Variant not in reference panel
+    if len(g) == 0:
+        if log.parameters["EXCLUDE_NO_REFERENCE"]:
+            log.record_excluded(cur, "NOT_IN_REFERENCE_PANEL")
+            return False
+
+        else:
+            log.record_included_special(
+                cur,
+                "NOT_IN_REFERENCE",
+                "Variant {} was absent from the reference panel but was still "
+                "included in the GRS. It is important to validate that it is "
+                "not correlated with other included variants."
+                "".format(cur)
+            )
+            return True
+
+    elif len(g) == 1:
+        # Variant was uniquely found in the reference panel, we can check the
+        # MAF.
+        maf = g[0].maf()
+        if maf <= log.parameters["MAF_THRESHOLD"]:
+            log.record_excluded(
+                cur,
+                "MAF_FILTER",
+                "MAF from reference panel is {:g}".format(maf)
+            )
+            return False
+
+    # Variant is duplicate or multiallelic
+    elif len(g) > 1:
+        log.record_excluded(cur, "DUP_OR_MULTIALLELIC_IN_REFERENCE_PANEL")
+        return False
+
+    return True
+
+
+def ld_prune(summary, g, genotypes, log):
+    """Return a list of variant with all variants correlated to cur removed."""
+    v = g.variant
+    left = v.pos - log.parameters["LD_WINDOW_SIZE"] // 2
+    right = v.pos + log.parameters["LD_WINDOW_SIZE"] // 2
+
+    others = list(genotypes.get_variants_in_region(v.chrom, left, right))
+
+    # Remove the variants in reference but not in summary.
+    others = [
+        other_g for other_g in others if other_g.variant in summary.keys()
+    ]
+
+    if len(others) < 1:
+        # No need to prune, no variants in LD.
+        return summary
+
+    # r2 is a series with index the variant name in the reference file.
+    r2 = geneparse.utils.compute_ld(g, others, r2=True)
+
+    # Remove all the variants from the summary statistics if correlated.
+    ld_threshold = log.parameters["LD_CLUMP_THRESHOLD"]
+
+    # Record the LD matrix.
+    log.record_ld_block(v, others, r2.values)
+
+    for g, ld in zip(others, r2):
+        if ld >= ld_threshold:
+            del summary[g.variant]
+
+            log.record_excluded(
+                g.variant,
+                "LD_CLUMPED",
+                "LD with {} {} is {:g}".format(
+                    v.name if v.name else "",
+                    v, ld
+                )
+            )
+
+    return summary
 
 
 def write_selection(grs, log):
@@ -1015,22 +858,14 @@ def main():
                                       region=region,
                                       exclude_region=exclude_region)
 
-    # Get the genotypes from the reference.
-    log.logger.info("Extracting genotypes.")
-    try:
-        previous_geneparse_log = geneparse.config.LOG_NOT_FOUND
-        geneparse.config.LOG_NOT_FOUND = False
-        genotypes = extract_genotypes(reference_filename, summary,
-                                      maf_threshold, log)
-    finally:
-        geneparse.config.LOG_NOT_FOUND = previous_geneparse_log
-
-    # Build an index for the available variants.
-    index = build_index(set(genotypes.keys()))
-
     # Do the greedy variant selection.
-    grs = greedy_pick_clump(summary, genotypes, index, ld_threshold,
-                            ld_window_size, log, target_n)
+    with geneparse.parsers["plink"](reference_filename) as reference:
+        genotypes = InMemoryGenotypeExtractor(reference, summary.keys())
+
+    try:
+        grs = greedy_pick_clump(summary, genotypes, log)
+    finally:
+        genotypes.close()
 
     # Call the logger to dump the trace.
     log.log_selection_trace()

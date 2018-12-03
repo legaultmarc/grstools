@@ -1,6 +1,42 @@
 Command-line utilities
 =======================
 
+.. grs-create
+.. _grs-create:
+
+``grs-create``
+^^^^^^^^^^^^^^^
+
+The most common algorithm to create a GRS is the LD pruning followed by p-value
+thresholding approach. This script provides a convenient implementation of this
+algorithm that can be easily integrated to computational pipelines.
+
+This method consists of the following steps:
+
+1. Rank the variants by increasing p-value.
+2. Select the top variant, include it in the GRS and exclude all variants in LD
+   at a pre-defined threshold (``--ld-threshold``).
+3. Repeat 2. until the p-value threshold is reached (``--p-threshold``).
+
+.. note::
+
+    If a ``maf`` column is present in the summary statistics association file,
+    all variants that are too rare will be automaticall excluded when reading
+    the summary statistics file. If it is not available, the MAF will be
+    computed from the genotype data to allow filtering, which is more
+    computationally intensive.
+
+For now, a plink binary file is required for the reference. A
+population-specific reference panel like the 1000 genomes phase 3 should be
+used.
+
+This script generates a 'grs' file that is suitable for computing the GRS using
+:ref:`grs-compute`.
+
+.. literalinclude:: includes/grs_create_help.txt
+    :language: none
+
+
 .. grs-compute
 .. _grs-compute:
 
@@ -44,43 +80,6 @@ genotype confidence weighting:
    the use of the "ImputedVariant" class in the geneparse reader.
 
 .. literalinclude:: includes/grs_compute_help.txt
-    :language: none
-
-.. grs-create
-.. _grs-create:
-
-``grs-create``
-^^^^^^^^^^^^^^^
-
-Creating a GRS consists of selecting variants that will be considered jointly
-when the GRS will be computed using genotype data.
-
-This script requires a ``.grs`` file and the selection is based on the p-value
-sorting and thresholding algorithm.
-
-This method consists of the following steps:
-
-1. Rank the variants by increasing p-value.
-2. Select the top variant, include it in the GRS and exclude all variants in LD
-   at a pre-defined threshold (``--ld-threshold``).
-3. Repeat 2. until the p-value threshold is reached (``--p-threshold``).
-
-.. note::
-
-    If a ``maf`` column is present in the summary statistics association file,
-    all variants that are too rare will be automaticall excluded when reading
-    the summary statistics file. If it is not available, the MAF will be
-    computed from the genotype data to allow filtering, which is more
-    computationally intensive.
-
-For now, a plink binary file is required for the reference. A
-population-specific reference panel like the 1000 genomes phase 3 should be
-used.
-
-This script generates a 'grs' file that is suitable for computing the GRS using
-:ref:`grs-compute`.
-
-.. literalinclude:: includes/grs_create_help.txt
     :language: none
 
 .. grs-mr
