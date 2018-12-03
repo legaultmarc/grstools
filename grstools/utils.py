@@ -191,9 +191,13 @@ def regress(model, test, phenotypes):
         raise ValueError("Statistical test should be logistic or linear.")
 
     # Execute the test.
+    test_kwargs = None if test == "logistic" else {
+        "condition_value_t": float("infinity")
+    }
+
     execute_formula(
         phenotypes, None, model, test,
-        test_kwargs=None,
+        test_kwargs=test_kwargs,
         subscribers=[subscriber],
         variant_predicates=None,
     )
