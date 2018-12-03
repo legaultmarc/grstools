@@ -18,6 +18,9 @@ from ..scripts.utils.beta_plot import compute_beta_coefficients
 
 class TestCompute(unittest.TestCase):
     def test_betasubscriber_handle_no_flip(self):
+        # BetaTuple signature: e_risk, e_coef, e_error
+        #                      risk allele, coefficient, se
+
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
         b1 = BetaTuple("A", 0.45, None)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
@@ -26,20 +29,21 @@ class TestCompute(unittest.TestCase):
         variant_to_expected = {v1: b1, v2: b2}
 
         # This is a mock of expected genetest results.
+        # In this case the observed and expected coefficients are the same.
         result1 = {
             "MODEL": {
                 "nobs": 3767
             },
             "SNPs": {
                 "chrom": "chr2",
-                 "pos": 12345,
-                 "coef": 0.45,
-                 "major": "G",
-                 "minor": "A",
-                 "std_err": 0.07027076759612147,
-                 "maf": 0.060788425803026284
-             }
+                "pos": 12345,
+                "coef": 0.45,
+                "major": "G",
+                "minor": "A",
+                "std_err": 0.07027076759612147,
+                "maf": 0.060788425803026284
             }
+        }
 
         result2 = {
             "MODEL": {
@@ -47,13 +51,13 @@ class TestCompute(unittest.TestCase):
             },
             "SNPs": {
                 "chrom": "chr21",
-                 "pos": 6789,
-                 "coef": -0.91,
-                 "major": "C",
-                 "minor": "T",
-                 "std_err": 0.09678,
-                 "maf": 0.0223
-             }
+                "pos": 6789,
+                "coef": -0.91,
+                "major": "C",
+                "minor": "T",
+                "std_err": 0.09678,
+                "maf": 0.0223
+            }
         }
 
         beta_sub = BetaSubscriber(variant_to_expected)
@@ -68,10 +72,10 @@ class TestCompute(unittest.TestCase):
 
     def test_betasubscriber_handle_flip(self):
         v1 = geneparse.Variant(None, 2, 12345, ["A", "G"])
-        # flipped alleles and reversed coefficient sign of noFlip function
-        b1 = BetaTuple("G", -0.45, None)
         v2 = geneparse.Variant(None, 21, 6789, ["C", "T"])
-        # flipped alleles and reversed coefficient sign of noFlip function
+
+        # flipped alleles and coefficient from the noFlip test case
+        b1 = BetaTuple("G", -0.45, None)
         b2 = BetaTuple("C", 0.91, None)
 
         variant_to_expected = {v1: b1, v2: b2}
@@ -82,14 +86,14 @@ class TestCompute(unittest.TestCase):
             },
             "SNPs": {
                 "chrom": "chr2",
-                 "pos": 12345,
-                 "coef": 0.45,
-                 "major": "G",
-                 "minor": "A",
-                 "std_err": 0.07027076759612147,
-                 "maf": 0.060788425803026284
-             }
+                "pos": 12345,
+                "coef": 0.45,
+                "major": "G",
+                "minor": "A",
+                "std_err": 0.07027076759612147,
+                "maf": 0.060788425803026284
             }
+        }
 
         result2 = {
             "MODEL": {
@@ -97,19 +101,20 @@ class TestCompute(unittest.TestCase):
             },
             "SNPs": {
                 "chrom": "chr21",
-                 "pos": 6789,
-                 "coef": -0.91,
-                 "major": "C",
-                 "minor": "T",
-                 "std_err": 0.09678,
-                 "maf": 0.0223
-             }
+                "pos": 6789,
+                "coef": -0.91,
+                "major": "C",
+                "minor": "T",
+                "std_err": 0.09678,
+                "maf": 0.0223
+            }
         }
 
         beta_sub = BetaSubscriber(variant_to_expected)
         beta_sub.handle(result1)
         beta_sub.handle(result2)
 
+        # We make sure that the results have been flipped as required.
         self.assertEqual(variant_to_expected[v1].e_coef,
                          variant_to_expected[v1].o_coef)
 
@@ -120,7 +125,7 @@ class TestCompute(unittest.TestCase):
         """This function tests de computation of beta coefficients by
            comparing beta coefficients computed with plink (--assoc --linear)
            as the expected coefficients and computed observed coefficients.
-           
+
         """
         # GET VARIANTS
         # Load variants from plink association results file
@@ -190,5 +195,7 @@ class TestCompute(unittest.TestCase):
         # COMPARE EXPECTED AND OBSERVED COEFFICIENTS
         self.assertEqual(len(beta_sub.variant_to_expected), 200)
 
+        # We use 3 places because that's how many decimals there are in the
+        # plink results file.
         for v, b in beta_sub.variant_to_expected.items():
-            self.assertAlmostEqual(b.e_coef, b.o_coef, places=5)
+            self.assertAlmostEqual(b.e_coef, b.o_coef, places=3)
