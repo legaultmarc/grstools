@@ -120,7 +120,9 @@ quality metric (e.g. in a VCF file).</p>
 <div class="highlight-none"><div class="highlight"><pre><span></span>usage: grs-compute [-h] [--genotypes GENOTYPES]
                    [--genotypes-format GENOTYPES_FORMAT]
                    [--genotypes-kwargs GENOTYPES_KWARGS] --grs GRS [--out OUT]
-                   [--ignore-genotype-quality] [--keep-ambiguous]
+                   [--ignore-genotype-quality] [--skip-strand-check]
+                   [--exclude-strand-ambiguous] [--reference REFERENCE]
+                   [--debug]
 
 Compute the risk score.
 
@@ -146,8 +148,17 @@ optional arguments:
                         variants will not be weighted with respect to their
                         quality score. By default, the weights are used if
                         available.
-  --keep-ambiguous      Do not ignore ambiguous allele combinations (i.e. A/T
-                        and G/C). By default, such alleles are ignored.
+  --skip-strand-check   Skips all the strand validation checks and assume that
+                        the strand in the genotype and GRS files are the same.
+                        This option should only be used if the variants were
+                        manually curated. This option is also assumed if no
+                        --reference is provided (with a warning).
+  --exclude-strand-ambiguous
+                        Exclude all strand ambiguous variants.
+  --reference REFERENCE
+                        Plink prefix for the reference genotypes. This is used
+                        to find tags when needed or to compute the MAF.
+  --debug
 </pre></div>
 </div>
 </div>
@@ -314,12 +325,13 @@ can manipulated and saved to a file.</p>
 <img alt="_images/correlation.png" src="_images/correlation.png" />
 <p>On the plot, the linear regression fit is displayed as well as the identity
 line to quickly assess the agreement between GRS.</p>
-<div class="highlight-none"><div class="highlight"><pre><span></span>usage: grs-utils [-h] {histogram,quantiles,standardize,correlation} ...
+<div class="highlight-none"><div class="highlight"><pre><span></span>usage: grs-utils [-h]
+                 {histogram,quantiles,standardize,correlation,beta-plot} ...
 
 Utilities to manipulate computed GRS.
 
 positional arguments:
-  {histogram,quantiles,standardize,correlation}
+  {histogram,quantiles,standardize,correlation,beta-plot}
     histogram           Plot the histogram of the computed GRS.
     quantiles           Dichotomize the GRS using quantiles. Takes two
                         parameters: k and q where q is the number of quantiles
@@ -329,6 +341,9 @@ positional arguments:
                         means the median is used.
     standardize         Standardize the GRS (grs &lt;- (grs - mean) / std).
     correlation         Plot the correlation between two GRS.
+    beta-plot           Compute beta coefficients from given genotypes data
+                        and compare them with beta coefficients from the grs
+                        file.
 
 optional arguments:
   -h, --help            show this help message and exit
