@@ -1,55 +1,15 @@
 Command-line utilities
 =======================
 
-.. grs-compute
-.. _grs-compute:
-
-``grs-compute``
-^^^^^^^^^^^^^^^
-
-Computes the GRS using a '.grs' file and individual-level genotypes. 
-
-The GRS are computed using the following formula:
-
-.. math::
-    GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij} 
-
-Where :math:`GRS_i` is the genetic risk score for the `i`:sup:`th` sample, j
-indexes the genetic variants included in the score, :math:`\beta_j` is the
-coefficient estimated from the summary statistics and :math:`X_{ij}` is the
-number of effect alleles carried by individual `i` at variant `j`.
-
-.. note::
-    If the coefficient (:math:`\beta`) is negative, it's additive inverse is
-    used instead (:math:`-\beta`) and the effect and reference alleles are
-    swapped accordingly. This ensures that contributions to the GRS are always
-    positive.
-
-If the IMPUTE2 format is used to hold the genotype information, the variants
-are further weighted by the INFO score as a form of genotype confidence
-weighting:
-
-.. math::
-    GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij}  \cdot info_j
-
-.. todo::
-    Eventually, we will weight variant as soon as there is some genotype
-    quality metric (e.g. in a VCF file).
-
-.. literalinclude:: includes/grs_compute_help.txt
-    :language: none
-
 .. grs-create
 .. _grs-create:
 
 ``grs-create``
 ^^^^^^^^^^^^^^^
 
-Creating a GRS consists of selecting variants that will be considered jointly
-when the GRS will be computed using genotype data.
-
-This script requires a ``.grs`` file and the selection is based on the p-value
-sorting and thresholding algorithm.
+The most common algorithm to create a GRS is the LD pruning followed by p-value
+thresholding approach. This script provides a convenient implementation of this
+algorithm that can be easily integrated to computational pipelines.
 
 This method consists of the following steps:
 
@@ -74,6 +34,52 @@ This script generates a 'grs' file that is suitable for computing the GRS using
 :ref:`grs-compute`.
 
 .. literalinclude:: includes/grs_create_help.txt
+    :language: none
+
+
+.. grs-compute
+.. _grs-compute:
+
+``grs-compute``
+^^^^^^^^^^^^^^^
+
+Computes the GRS using a '.grs' file and individual-level genotypes. 
+
+The GRS are computed using the following formula:
+
+.. math::
+    GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij} 
+
+Where :math:`GRS_i` is the genetic risk score for the `i`:sup:`th` sample, j
+indexes the genetic variants included in the score, :math:`\beta_j` is the
+coefficient estimated from the summary statistics and :math:`X_{ij}` is the
+number of effect alleles carried by individual `i` at variant `j`.
+
+.. note::
+    If the coefficient (:math:`\beta`) is negative, it's additive inverse is
+    used instead (:math:`-\beta`) and the effect and reference alleles are
+    swapped accordingly. This ensures that contributions to the GRS are always
+    positive.
+
+.. note::
+   For missing genotypes, the mean dosage with respect to the effect allele is
+   used when computing the variant's contribution. Another intuitive way of
+   handling this case would have been to set the contribution to 0, but doing
+   so is a stronger claim than using the mean, especially for variants with a
+   MAF close to 0.5.
+
+If supported imputation data formats are used to hold the genotype information,
+the variants are further weighted by the INFO score as a form of global
+genotype confidence weighting:
+
+.. math::
+    GRS_i = \sum_{j=0}^{m} \beta_j \cdot X_{ij}  \cdot info_j
+
+.. note::
+   At this point, few data formats are supported. This is dependant on
+   the use of the "ImputedVariant" class in the geneparse reader.
+
+.. literalinclude:: includes/grs_compute_help.txt
     :language: none
 
 .. grs-mr
@@ -168,6 +174,34 @@ On the plot, the linear regression fit is displayed as well as the identity
 line to quickly assess the agreement between GRS.
 
 .. literalinclude:: includes/grs_utils_help.txt
+    :language: none
+
+beta-plot
+++++++++++
+
+This utility compares the effect of variants between a summary statistics file
+in the GRS format and regression results using the user's data. The goal is
+to ensure that the reported effect sizes are compatible and that there are no
+large or systematic discrepencies that could indicate a population or strand
+mismatch.
+
+The utility also displays the standard errors on the plot. For the error of the
+expected coefficients, the standard errors are derived from the p-values and
+effect sizes.
+
+.. math::
+    z = \frac{\beta}{s.e.}
+
+Here is an example of the plot:
+
+.. image:: _static/images/beta_plot.png
+
+The execution also produces a text file displaying the SNPs information
+(chromosome, position, alleles, coefficients, standard errors, maf in the
+given population and n, the number of individuals used to compute each
+observed coefficient).
+
+.. literalinclude:: includes/grs_utils_beta_plot_help.txt
     :language: none
 
 .. grs-evaluate
