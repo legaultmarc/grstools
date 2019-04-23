@@ -67,7 +67,8 @@ def parse_computed_grs_file(filename):
     return df
 
 
-def parse_gwas_ss_format_file(filename, p_threshold=1, maf_threshold=0):
+def parse_gwas_ss_format_file(filename, p_threshold=1, maf_threshold=0,
+                              log=False):
     """Parse a file with the summary statistics format.
 
     This format is defined in another project (gwas_summary_statistics).
