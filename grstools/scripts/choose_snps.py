@@ -46,7 +46,8 @@ import geneparse
 import geneparse.utils
 from geneparse.exceptions import InvalidChromosome
 
-from ..utils import parse_grs_file, InMemoryGenotypeExtractor
+from ..utils import (parse_grs_file, parse_gwas_ss_format_file,
+                     InMemoryGenotypeExtractor)
 from ..version import grstools_version
 
 
@@ -426,7 +427,7 @@ class Row(object):
 
 def read_summary_statistics(filename, p_threshold, log, sep=",",
                             exclude_ambiguous=False, region=None,
-                            exclude_region=None):
+                            exclude_region=None, gwas_ss_format=False):
     """Read summary statistics file.
 
     Args:
@@ -455,7 +456,12 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
     # Variant to stats orderedict (but constructed as a list).
     summary = []
 
-    df = parse_grs_file(filename, p_threshold=p_threshold, sep=sep)
+    if gwas_ss_format:
+        df = parse_gwas_ss_format_file(filename, p_threshold=p_threshold)
+
+    else:
+        df = parse_grs_file(filename, p_threshold=p_threshold, sep=sep)
+
     df.sort_values("p-value", inplace=True)
 
     # Method to see if a variant is in a region.
@@ -784,6 +790,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--summary-gwas-ss-format",
+        help=("Flag so that the GWAS summary statistics format is assumed"
+              "instead of the GRS format (StatGen)."),
+        action="store_true"
+    )
+
+    parser.add_argument(
         "--output", "-o",
         help="Output prefix (default: %(default)s).",
         default="grstools_selection"
@@ -853,10 +866,13 @@ def main():
 
     # Read the summary statistics.
     log.logger.info("Reading summary statistics.")
-    summary = read_summary_statistics(summary_filename, p_threshold, log,
-                                      exclude_ambiguous=exclude_ambiguous,
-                                      region=region,
-                                      exclude_region=exclude_region)
+    summary = read_summary_statistics(
+        summary_filename, p_threshold, log,
+        exclude_ambiguous=exclude_ambiguous,
+        region=region,
+        exclude_region=exclude_region,
+        gwas_ss_format=args.summary_gwas_ss_format
+    )
 
     # Do the greedy variant selection.
     with geneparse.parsers["plink"](reference_filename) as reference:

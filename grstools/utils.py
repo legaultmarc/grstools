@@ -49,9 +49,86 @@ COL_TYPES = {
 }
 
 
+GWAS_SS_COL_TYPES = {
+    "study_marker_name": str,
+    "chrom": str,
+    "pos": int,
+    "reference_allele": str,
+    "coded_allele": str,
+    "effect": float,
+    "se": float,
+    "p": float,
+}
+
+
 def parse_computed_grs_file(filename):
     df = pd.read_csv(filename, sep=",", index_col="sample")
     df.index = df.index.astype(str)
+    return df
+
+
+def parse_gwas_ss_format_file(filename, p_threshold=1, maf_threshold=0):
+    """Parse a file with the summary statistics format.
+
+    This format is defined in another project (gwas_summary_statistics).
+
+    The Fields are TAB delimited and as follows:
+
+    - study_marker_name
+    - chrom
+    - pos
+    - reference_allele
+    - coded_allele
+    - effect
+    - se
+    - p
+    - maf or coded_allele_freq (optional)
+
+    """
+    df = pd.read_csv(filename, sep="\t", dtype=GWAS_SS_COL_TYPES)
+
+    cols = list(GWAS_SS_COL_TYPES.keys())
+
+    if "maf" in df.columns:
+        cols.append("maf")
+
+    if "coded_allele_freq" in df.columns:
+        # We convert to MAF and keep that.
+        df["maf"] = np.minimum(df.coded_allele_freq, 1 - df.coded_allele_freq)
+        cols.append("maf")
+
+    df = df[cols]
+
+    # Rename as needed.
+    df = df.rename(columns={
+        "study_marker_name": "name",
+        "reference_allele": "reference",
+        "coded_allele": "risk",
+        "p": "p-value",
+    })
+
+    return _sanitize_grs_input(df, p_threshold, maf_threshold, log)
+
+
+def _sanitize_grs_input(df, p_threshold, maf_threshold, log):
+    # Make the alleles uppercase.
+    df["reference"] = df["reference"].str.upper()
+    df["risk"] = df["risk"].str.upper()
+
+    # Apply thresholds.
+    if "p-value" in df.columns:
+        if log:
+            logger.info("Applying p-value threshold (p <= {})."
+                        "".format(p_threshold))
+
+        df = df.loc[df["p-value"] <= p_threshold, :]
+
+    if "maf" in df.columns:
+        if log:
+            logger.info("Applying MAF threshold (MAF >= {})."
+                        "".format(maf_threshold))
+        df = df.loc[df["maf"] >= maf_threshold, :]
+
     return df
 
 
@@ -90,25 +167,7 @@ def parse_grs_file(filename, p_threshold=1, maf_threshold=0, sep=",",
     # This will raise a KeyError if needed.
     df = df[cols]
 
-    # Make the alleles uppercase.
-    df["reference"] = df["reference"].str.upper()
-    df["risk"] = df["risk"].str.upper()
-
-    # Apply thresholds.
-    if "p-value" in df.columns:
-        if log:
-            logger.info("Applying p-value threshold (p <= {})."
-                        "".format(p_threshold))
-
-        df = df.loc[df["p-value"] <= p_threshold, :]
-
-    if "maf" in df.columns:
-        if log:
-            logger.info("Applying MAF threshold (MAF >= {})."
-                        "".format(maf_threshold))
-        df = df.loc[df["maf"] >= maf_threshold, :]
-
-    return df
+    return _sanitize_grs_input(df, p_threshold, maf_threshold, log)
 
 
 def mr_effect_estimate(phenotypes, outcome, exposure, n_iter=1000,
