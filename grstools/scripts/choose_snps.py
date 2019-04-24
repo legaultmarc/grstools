@@ -516,7 +516,7 @@ def read_summary_statistics(filename, p_threshold, log, sep=",",
                     variant,
                     "MAF_FILTER",
                     "MAF recorded as {:g} in summary statistics file"
-                    "".format()
+                    "".format(info.maf)
                 )
                 continue
 
