@@ -363,7 +363,7 @@ class SNPSelectionLog(object):
         filename = os.path.join(
             blocks_directory,
             "variant_{}_{}:{}-{}.blocks.pkl".format(
-                variant.name, variant.chrom, start, end
+                variant.name.replace("/", "_"), variant.chrom, start, end
             )
         )
 
